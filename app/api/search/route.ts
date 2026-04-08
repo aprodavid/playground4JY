@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { DEFAULT_WEIGHTS, RIDE_WHITELIST, type InstallPlaceCode, type RideCacheDoc } from '@/types/domain';
 import { fetchRide4 } from '@/lib/public-data';
+import { isMissingEnvError } from '@/lib/env';
 import { getFacilitiesByRegion, getRideCaches, upsertRideCache } from '@/lib/firestore-repo';
 import { scoreFacility } from '@/lib/scoring';
 
@@ -18,6 +19,7 @@ const schema = z.object({
     ride5: z.number(), ride8: z.number(), excellentBonus: z.number(),
   }).optional(),
 });
+export const runtime = 'nodejs';
 
 async function buildRideCache(pfctSn: number): Promise<RideCacheDoc> {
   try {
@@ -53,41 +55,48 @@ async function buildRideCache(pfctSn: number): Promise<RideCacheDoc> {
 }
 
 export async function POST(req: Request) {
-  const payload = await req.json();
-  const parsed = schema.safeParse(payload);
-  if (!parsed.success) return NextResponse.json({ errors: parsed.error.flatten() }, { status: 400 });
+  try {
+    const payload = await req.json();
+    const parsed = schema.safeParse(payload);
+    if (!parsed.success) return NextResponse.json({ errors: parsed.error.flatten() }, { status: 400 });
 
-  const { sido, sigungu, installPlaces, installYearFrom, topN, weights } = parsed.data;
-  const ws = weights ?? DEFAULT_WEIGHTS;
+    const { sido, sigungu, installPlaces, installYearFrom, topN, weights } = parsed.data;
+    const ws = weights ?? DEFAULT_WEIGHTS;
 
-  const facilities = (await getFacilitiesByRegion(sido, sigungu))
-    .filter((f) => installPlaces.includes(f.installPlaceCode as InstallPlaceCode))
-    .filter((f) => (installYearFrom ? (f.installYear ?? 0) >= installYearFrom : true));
+    const facilities = (await getFacilitiesByRegion(sido, sigungu))
+      .filter((f) => installPlaces.includes(f.installPlaceCode as InstallPlaceCode))
+      .filter((f) => (installYearFrom ? (f.installYear ?? 0) >= installYearFrom : true));
 
-  const rideCached = await getRideCaches(facilities.map((f) => f.pfctSn));
-  const rideMap = new Map(rideCached.map((r) => [r.pfctSn, r]));
+    const rideCached = await getRideCaches(facilities.map((f) => f.pfctSn));
+    const rideMap = new Map(rideCached.map((r) => [r.pfctSn, r]));
 
-  const missing = facilities.filter((f) => !rideMap.has(f.pfctSn));
-  const priority = missing.sort((a, b) => (b.isExcellent ? 1 : 0) - (a.isExcellent ? 1 : 0)).slice(0, 40);
-  for (const f of priority) {
-    const cache = await buildRideCache(f.pfctSn);
-    rideMap.set(f.pfctSn, cache);
+    const missing = facilities.filter((f) => !rideMap.has(f.pfctSn));
+    const priority = missing.sort((a, b) => (b.isExcellent ? 1 : 0) - (a.isExcellent ? 1 : 0)).slice(0, 40);
+    for (const f of priority) {
+      const cache = await buildRideCache(f.pfctSn);
+      rideMap.set(f.pfctSn, cache);
+    }
+
+    const scored = facilities
+      .map((f) => scoreFacility(f, rideMap.get(f.pfctSn) ?? {
+        pfctSn: f.pfctSn, rawCount: 0, filteredCount: 0, typeCount: 0, types: [], updatedAt: '', status: 'empty',
+      }, ws))
+      .sort((a, b) => b.score - a.score);
+
+    const recommended = scored.filter((x) => x.recommended);
+    const top = scored.slice(0, topN);
+    const nearMiss = scored.slice(topN, topN + 5);
+
+    return NextResponse.json({
+      summary: { totalCandidates: scored.length, recommended: recommended.length },
+      excellentSection: scored.filter((x) => x.isExcellent).slice(0, 20),
+      top,
+      nearMiss,
+    });
+  } catch (error) {
+    if (isMissingEnvError(error)) {
+      return NextResponse.json({ message: error.message }, { status: 500 });
+    }
+    return NextResponse.json({ message: 'search failed' }, { status: 500 });
   }
-
-  const scored = facilities
-    .map((f) => scoreFacility(f, rideMap.get(f.pfctSn) ?? {
-      pfctSn: f.pfctSn, rawCount: 0, filteredCount: 0, typeCount: 0, types: [], updatedAt: '', status: 'empty',
-    }, ws))
-    .sort((a, b) => b.score - a.score);
-
-  const recommended = scored.filter((x) => x.recommended);
-  const top = scored.slice(0, topN);
-  const nearMiss = scored.slice(topN, topN + 5);
-
-  return NextResponse.json({
-    summary: { totalCandidates: scored.length, recommended: recommended.length },
-    excellentSection: scored.filter((x) => x.isExcellent).slice(0, 20),
-    top,
-    nearMiss,
-  });
 }

@@ -1,4 +1,4 @@
-import { getEnv } from './env';
+import { getPublicDataEnv } from './env';
 
 type ApiItem = Record<string, string | number | undefined>;
 
@@ -11,9 +11,10 @@ type ApiResponse = {
 };
 
 async function fetchData(endpoint: string, params: Record<string, string | number>) {
-  const base = getEnv('PUBLIC_DATA_BASE_URL');
-  const serviceKey = getEnv('PUBLIC_DATA_SERVICE_KEY');
-  const url = new URL(`${base}${endpoint}`);
+  const { baseUrl, serviceKey } = getPublicDataEnv();
+  const normalizedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+  const normalizedEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  const url = new URL(`${normalizedBase}${normalizedEndpoint}`);
   url.searchParams.set('serviceKey', serviceKey);
   url.searchParams.set('_type', 'json');
 

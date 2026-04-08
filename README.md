@@ -27,6 +27,12 @@ npm run dev
 3. Build Command: `npm run build`, Output: `.next`
 4. 배포 후 Admin API로 지역 캐시 빌드
 
+### 배포 안정성 메모 (중요)
+- Firebase/Public Data 환경변수 검사는 **빌드 시점이 아닌 API Route 실행 시점**에 수행됩니다.
+- 환경변수가 누락되어도 빌드 자체는 실패하지 않으며, 실제 API 호출 시 JSON 에러를 반환합니다.
+- Firebase 관련 Route Handler는 모두 `runtime = 'nodejs'`로 동작합니다.
+- `FIREBASE_PRIVATE_KEY`는 `\\n` 문자열 줄바꿈을 서버에서 자동으로 실제 줄바꿈으로 복원합니다.
+
 ## Firestore 컬렉션 설명
 - `facilities`: pfc3 + exfc5 결합/정규화 시설 데이터
 - `rideCache`: ride4 캐시(화이트리스트 필터 결과 포함)
@@ -36,6 +42,7 @@ npm run dev
 - `PUBLIC_DATA_SERVICE_KEY`에 인증키를 입력
 - API base URL은 `PUBLIC_DATA_BASE_URL`로 관리
 - 키는 코드에 하드코딩하지 않고 환경변수로만 사용
+- base URL은 `pfc3 / ride4 / exfc5` 경로를 뒤에 붙여 호출되며, 끝 슬래시는 있어도/없어도 동작하도록 처리되어 있습니다.
 
 ## API 엔드포인트
 - `GET /api/sido`
