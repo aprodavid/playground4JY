@@ -1,18 +1,21 @@
 import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { getEnv } from './env';
+import { getFirebaseAdminEnv } from './env';
 
 function init() {
   if (getApps().length > 0) {
     return getApps()[0]!;
   }
+  const env = getFirebaseAdminEnv();
   return initializeApp({
     credential: cert({
-      projectId: getEnv('FIREBASE_PROJECT_ID'),
-      clientEmail: getEnv('FIREBASE_CLIENT_EMAIL'),
-      privateKey: getEnv('FIREBASE_PRIVATE_KEY'),
+      projectId: env.projectId,
+      clientEmail: env.clientEmail,
+      privateKey: env.privateKey,
     }),
   });
 }
 
-export const db = getFirestore(init());
+export function getFirestoreAdmin() {
+  return getFirestore(init());
+}
