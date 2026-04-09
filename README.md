@@ -26,6 +26,7 @@ npm run dev
 2. Environment Variables에 `.env.example`의 키 전부 등록
 3. Build Command: `npm run build`, Output: `.next`
 4. 배포 후 첫 진입에서 운영 패널로 지역 캐시 빌드
+5. Vercel/로컬 npm 해석 일치를 위해 `package.json`의 `packageManager: npm@10.9.2`를 유지
 
 ### 배포 안정성 메모 (중요)
 - Firebase/Public Data 환경변수 검사는 **빌드 시점이 아닌 API Route 실행 시점**에 수행됩니다.
