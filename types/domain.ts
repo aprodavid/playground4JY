@@ -11,6 +11,26 @@ export const RIDE_WHITELIST = [
   'D020','D021','D022','D080','D050','D052',
 ] as const;
 
+export const KOREA_SIDO_LIST = [
+  '서울특별시',
+  '부산광역시',
+  '대구광역시',
+  '인천광역시',
+  '광주광역시',
+  '대전광역시',
+  '울산광역시',
+  '세종특별자치시',
+  '경기도',
+  '강원특별자치도',
+  '충청북도',
+  '충청남도',
+  '전북특별자치도',
+  '전라남도',
+  '경상북도',
+  '경상남도',
+  '제주특별자치도',
+] as const;
+
 export type WeightConfig = {
   recent3yBonus: number;
   recent5yBonus: number;
@@ -85,4 +105,13 @@ export type SearchResult = {
   reasons: string[];
   warnings: string[];
   recommended: boolean;
+};
+
+export type CacheMetaDoc = {
+  regionKey: string;
+  lastBuiltAt: string;
+  facilitiesCount: number;
+  excellentCount: number;
+  lastBuildStatus: 'ok' | 'error';
+  lastError?: string;
 };

@@ -16,6 +16,10 @@ export async function POST(req: Request) {
     const { sido, sigungu, limit } = parsed.data;
 
     const facilities = await getFacilitiesByRegion(sido, sigungu);
+    if (facilities.length === 0) {
+      return NextResponse.json({ message: '시설 캐시가 없어 ride 캐시를 갱신할 수 없습니다. 먼저 지역 캐시를 빌드하세요.', tried: 0, updated: 0 }, { status: 400 });
+    }
+
     const target = facilities.slice(0, limit);
     let updated = 0;
 
@@ -48,7 +52,7 @@ export async function POST(req: Request) {
       }
     }
 
-    return NextResponse.json({ tried: target.length, updated });
+    return NextResponse.json({ tried: target.length, updated, message: `ride 캐시 ${updated}건 갱신 완료` });
   } catch (error) {
     if (isMissingEnvError(error)) {
       return NextResponse.json({ message: error.message }, { status: 500 });

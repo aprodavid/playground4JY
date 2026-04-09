@@ -1,10 +1,11 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { DEFAULT_WEIGHTS, RIDE_WHITELIST, type InstallPlaceCode, type RideCacheDoc } from '@/types/domain';
-import { fetchRide4 } from '@/lib/public-data';
+import { fetchExfc5, fetchPfc3, fetchRide4 } from '@/lib/public-data';
 import { isMissingEnvError } from '@/lib/env';
-import { getFacilitiesByRegion, getRideCaches, upsertRideCache } from '@/lib/firestore-repo';
+import { getFacilitiesByRegion, getRideCaches, setCacheMeta, upsertRideCache, upsertFacilities } from '@/lib/firestore-repo';
 import { scoreFacility } from '@/lib/scoring';
+import { dedupeByCoordinate, toFacilityDoc } from '@/lib/normalization';
 
 const schema = z.object({
   sido: z.string().min(1),
@@ -54,6 +55,27 @@ async function buildRideCache(pfctSn: number): Promise<RideCacheDoc> {
   }
 }
 
+async function ensureFacilityCache(sido: string, sigungu?: string) {
+  const regionKey = `${sido}:${sigungu ?? 'ALL'}`;
+  const [pfc3, exfc5] = await Promise.all([
+    fetchPfc3({ ctprvnNm: sido, ...(sigungu ? { signguNm: sigungu } : {}) }),
+    fetchExfc5({ ctprvnNm: sido, ...(sigungu ? { signguNm: sigungu } : {}) }),
+  ]);
+
+  const excellentSet = new Set(exfc5.map((x) => Number(x.pfctSn)));
+  const normalized = pfc3.map((row) => toFacilityDoc(row, excellentSet.has(Number(row.pfctSn))));
+  const deduped = dedupeByCoordinate(normalized);
+  await upsertFacilities(deduped);
+  await setCacheMeta(regionKey, {
+    regionKey,
+    lastBuiltAt: new Date().toISOString(),
+    facilitiesCount: deduped.length,
+    excellentCount: deduped.filter((x) => x.isExcellent).length,
+    lastBuildStatus: 'ok',
+  });
+  return deduped.length;
+}
+
 export async function POST(req: Request) {
   try {
     const payload = await req.json();
@@ -63,7 +85,27 @@ export async function POST(req: Request) {
     const { sido, sigungu, installPlaces, installYearFrom, topN, weights } = parsed.data;
     const ws = weights ?? DEFAULT_WEIGHTS;
 
-    const facilities = (await getFacilitiesByRegion(sido, sigungu))
+    let facilities = await getFacilitiesByRegion(sido, sigungu);
+    let autoBuilt = false;
+
+    if (facilities.length === 0) {
+      const builtCount = await ensureFacilityCache(sido, sigungu);
+      autoBuilt = builtCount > 0;
+      facilities = await getFacilitiesByRegion(sido, sigungu);
+    }
+
+    if (facilities.length === 0) {
+      return NextResponse.json({
+        summary: { totalCandidates: 0, recommended: 0 },
+        excellentSection: [],
+        top: [],
+        nearMiss: [],
+        message: '선택한 지역의 시설 캐시가 비어 있습니다. 운영 패널에서 지역 캐시를 먼저 빌드하세요.',
+        needsCacheBuild: true,
+      });
+    }
+
+    facilities = facilities
       .filter((f) => installPlaces.includes(f.installPlaceCode as InstallPlaceCode))
       .filter((f) => (installYearFrom ? (f.installYear ?? 0) >= installYearFrom : true));
 
@@ -84,14 +126,15 @@ export async function POST(req: Request) {
       .sort((a, b) => b.score - a.score);
 
     const recommended = scored.filter((x) => x.recommended);
-    const top = scored.slice(0, topN);
-    const nearMiss = scored.slice(topN, topN + 5);
 
     return NextResponse.json({
       summary: { totalCandidates: scored.length, recommended: recommended.length },
       excellentSection: scored.filter((x) => x.isExcellent).slice(0, 20),
-      top,
-      nearMiss,
+      top: scored.slice(0, topN),
+      nearMiss: scored.slice(topN, topN + 5),
+      autoBuiltCache: autoBuilt,
+      needsCacheBuild: false,
+      message: autoBuilt ? '시설 캐시가 없어 자동으로 빌드한 뒤 검색을 진행했습니다.' : undefined,
     });
   } catch (error) {
     if (isMissingEnvError(error)) {

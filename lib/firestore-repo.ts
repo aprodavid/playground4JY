@@ -1,7 +1,8 @@
 import { getFirestoreAdmin } from './firestore';
-import type { FacilityDoc, RideCacheDoc } from '@/types/domain';
+import type { CacheMetaDoc, FacilityDoc, RideCacheDoc } from '@/types/domain';
 
 export async function upsertFacilities(facilities: FacilityDoc[]) {
+  if (facilities.length === 0) return;
   const db = getFirestoreAdmin();
   const batch = db.batch();
   facilities.forEach((f) => {
@@ -19,6 +20,7 @@ export async function getFacilitiesByRegion(sido: string, sigungu?: string) {
 }
 
 export async function getRideCaches(pfctSns: number[]) {
+  if (pfctSns.length === 0) return [];
   const db = getFirestoreAdmin();
   const chunks: number[][] = [];
   for (let i = 0; i < pfctSns.length; i += 30) chunks.push(pfctSns.slice(i, i + 30));
@@ -36,9 +38,43 @@ export async function upsertRideCache(doc: RideCacheDoc) {
   await db.collection('rideCache').doc(String(doc.pfctSn)).set(doc, { merge: true });
 }
 
-export async function setCacheMeta(regionKey: string, meta: Record<string, unknown>) {
+export async function setCacheMeta(regionKey: string, meta: CacheMetaDoc) {
   const db = getFirestoreAdmin();
   await db.collection('cacheMeta').doc(regionKey).set(meta, { merge: true });
+}
+
+export async function getCacheMeta(regionKey: string) {
+  const db = getFirestoreAdmin();
+  const snap = await db.collection('cacheMeta').doc(regionKey).get();
+  return snap.exists ? (snap.data() as CacheMetaDoc) : null;
+}
+
+export async function getSigunguBySido(sido: string) {
+  const db = getFirestoreAdmin();
+  const snap = await db.collection('facilities').where('sido', '==', sido).select('sigungu').get();
+  return [...new Set(snap.docs.map((d) => String(d.get('sigungu') ?? '')).filter(Boolean))].sort();
+}
+
+export async function getCollectionCounts() {
+  const db = getFirestoreAdmin();
+  const [facilities, rideCache, cacheMeta] = await Promise.all([
+    db.collection('facilities').count().get(),
+    db.collection('rideCache').count().get(),
+    db.collection('cacheMeta').count().get(),
+  ]);
+
+  return {
+    facilities: facilities.data().count,
+    rideCache: rideCache.data().count,
+    cacheMeta: cacheMeta.data().count,
+  };
+}
+
+export async function getLatestCacheMeta() {
+  const db = getFirestoreAdmin();
+  const snap = await db.collection('cacheMeta').orderBy('lastBuiltAt', 'desc').limit(1).get();
+  if (snap.empty) return null;
+  return snap.docs[0].data() as CacheMetaDoc;
 }
 
 export async function getFacilityByPfctSn(pfctSn: number) {

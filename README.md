@@ -25,7 +25,7 @@ npm run dev
 1. GitHub 저장소를 Vercel에 Import
 2. Environment Variables에 `.env.example`의 키 전부 등록
 3. Build Command: `npm run build`, Output: `.next`
-4. 배포 후 Admin API로 지역 캐시 빌드
+4. 배포 후 첫 진입에서 운영 패널로 지역 캐시 빌드
 
 ### 배포 안정성 메모 (중요)
 - Firebase/Public Data 환경변수 검사는 **빌드 시점이 아닌 API Route 실행 시점**에 수행됩니다.
@@ -44,6 +44,12 @@ npm run dev
 - 키는 코드에 하드코딩하지 않고 환경변수로만 사용
 - base URL은 `pfc3 / ride4 / exfc5` 경로를 뒤에 붙여 호출되며, 끝 슬래시는 있어도/없어도 동작하도록 처리되어 있습니다.
 
+## 사용자/운영 흐름 (v1)
+1. 시/도 선택 (정적 목록으로 항상 표시)
+2. 시/군/구 선택 (Firestore 캐시 우선, 없으면 공공데이터 API 조회)
+3. 캐시 상태 확인 및 필요 시 캐시 빌드
+4. 검색 실행
+
 ## API 엔드포인트
 - `GET /api/sido`
 - `GET /api/sigungu?sido=...`
@@ -51,6 +57,16 @@ npm run dev
 - `GET /api/facility/[pfctSn]`
 - `POST /api/admin/refresh-region`
 - `POST /api/admin/refresh-rides`
+- `GET /api/debug/status`
+- `GET /api/health`
+
+## 상태/진단 응답
+`/api/debug/status` 또는 `/api/health`는 아래를 JSON으로 제공합니다.
+- 환경변수 준비 여부
+- Firebase 연결 가능 여부
+- 공공데이터 API base URL 형식 확인
+- Firestore 컬렉션 문서 수 요약
+- 마지막 캐시 빌드 메타데이터
 
 ## 현재 v1 한계
 - 설치장소 코드 3종(A003/A022/A033)만 지원
