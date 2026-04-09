@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:package-metadata": "node scripts/validate-package-metadata.mjs"
   },
   "dependencies": {
     "firebase-admin": "^13.0.0",
