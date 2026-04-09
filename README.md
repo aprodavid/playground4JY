@@ -78,3 +78,18 @@ npm run dev
 - 가중치 프리셋 저장 및 A/B 테스트
 - 지도 기반 시각화 및 상세 비교 화면
 - 데이터 품질 태그 정교화(v7.1 규칙 확장)
+
+## npm Invalid Version 점검 가이드
+Vercel `npm install` 단계에서 `Invalid Version`이 발생할 때를 대비해 아래 점검을 수행합니다.
+
+- `npm run check:package-metadata`
+  - `package.json`의 `version`, `dependencies/devDependencies/peerDependencies/overrides/resolutions` 검사
+  - `package-lock.json`의 `packages[""]` 및 `node_modules/*` 엔트리의 `name/version` 검사
+  - 빈 문자열/비정상 semver 문자열 검사
+  - `next=15.3.8`, `eslint-config-next=15.3.8`, `react=19.0.0`, `react-dom=19.0.0` 정합성 검사
+
+권장 순서:
+1. `npm run check:package-metadata`
+2. `npm install`
+3. `npm run lint`
+4. `npm run build`
