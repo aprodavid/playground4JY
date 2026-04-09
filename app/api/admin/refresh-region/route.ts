@@ -9,11 +9,13 @@ const schema = z.object({ sido: z.string().min(1), sigungu: z.string().optional(
 export const runtime = 'nodejs';
 
 export async function POST(req: Request) {
+  let regionKey = 'unknown';
   try {
     const parsed = schema.safeParse(await req.json());
     if (!parsed.success) return NextResponse.json({ errors: parsed.error.flatten() }, { status: 400 });
 
     const { sido, sigungu } = parsed.data;
+    regionKey = `${sido}:${sigungu ?? 'ALL'}`;
     const [pfc3, exfc5] = await Promise.all([
       fetchPfc3({ ctprvnNm: sido, ...(sigungu ? { signguNm: sigungu } : {}) }),
       fetchExfc5({ ctprvnNm: sido, ...(sigungu ? { signguNm: sigungu } : {}) }),
@@ -24,7 +26,6 @@ export async function POST(req: Request) {
     const deduped = dedupeByCoordinate(normalized);
 
     await upsertFacilities(deduped);
-    const regionKey = `${sido}:${sigungu ?? 'ALL'}`;
     await setCacheMeta(regionKey, {
       regionKey,
       lastBuiltAt: new Date().toISOString(),
@@ -35,6 +36,16 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ regionKey, facilitiesCount: deduped.length });
   } catch (error) {
+    if (regionKey !== 'unknown') {
+      await setCacheMeta(regionKey, {
+        regionKey,
+        lastBuiltAt: new Date().toISOString(),
+        facilitiesCount: 0,
+        excellentCount: 0,
+        lastBuildStatus: 'error',
+        lastError: error instanceof Error ? error.message : 'unknown error',
+      });
+    }
     if (isMissingEnvError(error)) {
       return NextResponse.json({ message: error.message }, { status: 500 });
     }
