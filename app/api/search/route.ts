@@ -36,7 +36,7 @@ export async function POST(req: Request) {
         top: [],
         nearMiss: [],
         needsCacheBuild: true,
-        message: '시설 기준선 캐시가 준비되지 않았습니다. 먼저 파일데이터를 업로드해 기준선 캐시를 생성하세요.',
+        message: '시설 기준선 캐시가 준비되지 않았습니다. 먼저 기준선 캐시를 생성하세요.',
         emptyReason: baselineMeta?.baselineStatus === 'running' ? 'baseline-running' : 'baseline-not-ready',
       }, { status: 409 });
     }

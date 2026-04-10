@@ -1,57 +1,76 @@
-# 어린이 놀이시설 추천 웹앱 v2
+# 어린이 놀이시설 추천 웹앱 v3 (Vercel + Firebase Functions Worker)
 
-공공데이터(pfc3, ride4, exfc5)와 Firebase Firestore 캐시를 이용해 어린이 놀이시설 추천 결과를 제공하는 Next.js 앱입니다.
+## 아키텍처 요약
+- **Vercel(Next.js 15.3.8)**: UI, 검색, 작업(Job) 생성/조회/중지 API만 담당
+- **Firebase Functions 2nd gen**: baseline/ride 캐시를 백그라운드 배치로 생성
+- **Firestore**: `jobs`, `cacheMeta`, `facilities`, `rideCache`, `sigunguIndex` 저장소
+- 사용자 요청 당 공공데이터 API 직접 호출 없음(검색은 Firestore 캐시 조회만 수행)
 
-## 핵심 구조 (이번 변경)
-- **Baseline facilities 캐시**: 공공데이터 전국 페이지 순회 제거, **파일 업로드(JSON/CSV) 기반 import**로 즉시 생성
-- **Search**: Firestore `facilities`/`rideCache`만 사용 (검색 버튼이 API 크롤링을 유발하지 않음)
-- **Ride cache**: `ride4` API를 대표 `pfctSn` 대상 **부분 배치**로만 갱신 (없는 시설만 채움)
+## 왜 구조를 바꿨나?
+기존 구조는 Vercel Route Handler가 전국 페이지 순회를 직접 수행해서 **요청-응답이 장시간 점유**되고 타임아웃/지연이 발생했습니다. 이제 무거운 작업은 Functions 워커가 처리하고 Vercel은 상태 조회만 합니다.
 
-## 기술 스택
-- Next.js 15.3.8 (App Router)
-- TypeScript
-- Tailwind CSS
-- ESLint (flat config)
-- Firebase Firestore (캐시/저장소)
+## 컬렉션 구조
+- `jobs/{jobId}`
+  - `type`: `baseline | ride`
+  - `status`: `queued | running | success | error | stopped`
+  - `currentStage`, `currentInstallPlace`, `currentPage`, `totalPages`, `pagesFetched`
+  - `rawFacilityCount`, `filteredFacilityCount`, `successCount`, `errorCount`
+  - `startedAt`, `updatedAt`, `lastError`, `resultSummary`, `cursor`, `stopRequested`
+- `cacheMeta/baseline:global`
+  - baseline/ride의 통합 캐시 메타 상태
+- `facilities/{pfctSn}`
+  - `pfctSn`, 시설명, 설치장소코드, 주소, 시도/시군구, 설치연도, 면적, 좌표, 우수시설 여부
+- `rideCache/{pfctSn}`
+  - ride 집계 캐시
+- `sigunguIndex/{sido}`
+  - 시/도별 시/군/구 목록
 
-## 로컬 실행 방법
-```bash
-npm install
-cp .env.example .env.local
-npm run dev
-```
-
-## 필수 환경변수
+## Vercel 환경변수 (이름 고정)
 - `PUBLIC_DATA_BASE_URL`
 - `PUBLIC_DATA_SERVICE_KEY`
 - `FIREBASE_PROJECT_ID`
 - `FIREBASE_CLIENT_EMAIL`
 - `FIREBASE_PRIVATE_KEY`
 
-## 운영 플로우(v2)
-1. 운영 패널에서 `pfc3` 파일 업로드 (`.json`/`.csv`)
-2. 운영 패널에서 `exfc5` 파일 업로드 (`.json`/`.csv`)
-3. 운영 패널에서 **기준선 캐시 생성(import)** 실행
-4. 상태 새로고침으로 진행률/처리건수/성공/실패 확인
-5. baseline 준비 후 **ride 캐시 갱신** 실행
-6. 사용자 검색은 Firestore 캐시로 즉시 처리
+## 로컬 실행
+```bash
+npm install
+cp .env.example .env.local
+npm run dev
+```
 
-## API 엔드포인트
-- `GET /api/sido`
-- `GET /api/sigungu?sido=...`
-- `POST /api/search`
-- `GET /api/facility/[pfctSn]`
-- `POST /api/admin/baseline-import/upload-pfc3`
-- `POST /api/admin/baseline-import/upload-exfc5`
-- `POST /api/admin/baseline-import/start`
-- `GET /api/admin/baseline-import/status`
-- `POST /api/admin/refresh-region` (하위 호환, baseline import 시작으로 위임)
-- `POST /api/admin/refresh-rides`
-- `GET /api/debug/status`
-- `GET /api/health`
+## 운영 플로우 (온라인 전용)
+1. 운영 패널에서 **기준선 캐시 빌드 시작** 클릭 (`/api/admin/jobs/start`, type=baseline)
+2. 프론트가 `/api/admin/jobs/status` + `/api/debug/status`를 polling
+3. Firebase Functions 스케줄러가 queued/running baseline job을 이어서 처리
+4. 완료 시 `facilities`, `sigunguIndex`, `cacheMeta` 업데이트
+5. 운영 패널에서 **ride 캐시 갱신 시작** 클릭 (type=ride)
+6. Functions가 대표 좌표 dedupe 대상에 대해 ride cache를 부분 배치 갱신
 
-## 배포 안정성 메모
-- Firebase/Public Data 환경변수 검사는 빌드 시점이 아닌 API Route 실행 시점에 수행됩니다.
-- Firebase 관련 Route Handler는 모두 `runtime = 'nodejs'`를 유지합니다.
-- `FIREBASE_PRIVATE_KEY`는 `\\n` 문자열 줄바꿈을 서버에서 실제 줄바꿈으로 복원합니다.
-- 공공데이터 API는 브라우저에서 직접 호출하지 않고 Route Handler를 통해서만 호출됩니다.
+## Firebase/GCP 수동 설정 순서
+1. Firebase 프로젝트 생성 및 Blaze 요금제 활성화
+2. Firestore Native 모드 생성
+3. Functions 배포 준비
+   - `cd functions && npm install && npm run build`
+4. Secret 등록
+   - `firebase functions:secrets:set PUBLIC_DATA_SERVICE_KEY`
+5. Parameter 등록
+   - `firebase functions:config:set` 대신 **2nd gen param 값** 설정(`PUBLIC_DATA_BASE_URL`)
+   - 또는 배포 시 콘솔에서 param 값 입력
+6. 배포
+   - `firebase deploy --only functions`
+7. Cloud Scheduler 확인
+   - `workerTick`(2분 간격) 트리거 활성화 확인
+8. Vercel 환경변수 입력(이름 변경 금지)
+
+## Vercel API
+- `POST /api/admin/jobs/start` (`baseline|ride`)
+- `GET /api/admin/jobs/status`
+- `POST /api/admin/jobs/stop`
+- `POST /api/search` (Firestore 캐시만 조회)
+- `GET /api/sigungu?sido=...` (`sigunguIndex`만 조회)
+- `GET /api/debug/status`, `GET /api/health`
+
+## 참고
+- `FIREBASE_PRIVATE_KEY`의 `\n`은 서버에서 실제 개행으로 복원됩니다.
+- 수동 파일 업로드 경로는 비활성화(410)되어 있습니다.

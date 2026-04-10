@@ -166,3 +166,28 @@ export type CacheMetaDoc = {
     skippedExistingTargets: number;
   };
 };
+
+export type JobType = 'baseline' | 'ride';
+export type JobStatus = 'queued' | 'running' | 'success' | 'error' | 'stopped';
+
+export type JobDoc = {
+  jobId: string;
+  type: JobType;
+  status: JobStatus;
+  currentStage?: string | null;
+  currentInstallPlace?: string | null;
+  currentPage?: number;
+  totalPages?: number | null;
+  pagesFetched?: number;
+  rawFacilityCount?: number;
+  filteredFacilityCount?: number;
+  successCount?: number;
+  errorCount?: number;
+  selectedRegion?: { sido: string; sigungu?: string };
+  startedAt?: string;
+  updatedAt?: string;
+  stopRequested?: boolean;
+  lastError?: string | null;
+  resultSummary?: Record<string, unknown> | null;
+  cursor?: Record<string, unknown>;
+};

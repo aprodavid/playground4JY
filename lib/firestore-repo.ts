@@ -1,6 +1,6 @@
 import { getFirestoreAdmin } from './firestore';
 import { stripUndefinedDeep } from './normalization';
-import type { CacheMetaDoc, FacilityDoc, RideCacheDoc } from '@/types/domain';
+import type { CacheMetaDoc, FacilityDoc, JobDoc, JobType, RideCacheDoc } from '@/types/domain';
 
 function sanitizeForFirestoreWrite<T>(doc: T): T {
   return stripUndefinedDeep(doc);
@@ -105,11 +105,12 @@ export async function getSigunguBySido(sido: string) {
 
 export async function getCollectionCounts() {
   const db = getFirestoreAdmin();
-  const [facilities, rideCache, cacheMeta, sigunguIndex] = await Promise.all([
+  const [facilities, rideCache, cacheMeta, sigunguIndex, jobs] = await Promise.all([
     db.collection('facilities').count().get(),
     db.collection('rideCache').count().get(),
     db.collection('cacheMeta').count().get(),
     db.collection('sigunguIndex').count().get(),
+    db.collection('jobs').count().get(),
   ]);
 
   return {
@@ -117,6 +118,7 @@ export async function getCollectionCounts() {
     rideCache: rideCache.data().count,
     cacheMeta: cacheMeta.data().count,
     sigunguIndex: sigunguIndex.data().count,
+    jobs: jobs.data().count,
   };
 }
 
@@ -125,6 +127,54 @@ export async function getLatestCacheMeta() {
   const snap = await db.collection('cacheMeta').orderBy('lastBuiltAt', 'desc').limit(1).get();
   if (snap.empty) return null;
   return snap.docs[0].data() as CacheMetaDoc;
+}
+
+export async function createJob(type: JobType) {
+  const db = getFirestoreAdmin();
+  const ref = db.collection('jobs').doc();
+  const now = new Date().toISOString();
+  const job: JobDoc = {
+    jobId: ref.id,
+    type,
+    status: 'queued',
+    startedAt: now,
+    updatedAt: now,
+    currentStage: type === 'baseline' ? 'queued' : 'queued',
+    currentPage: 1,
+    pagesFetched: 0,
+    rawFacilityCount: 0,
+    filteredFacilityCount: 0,
+    successCount: 0,
+    errorCount: 0,
+    stopRequested: false,
+    lastError: null,
+    resultSummary: null,
+  };
+  await ref.set(sanitizeForFirestoreWrite(job), { merge: false });
+  return job;
+}
+
+export async function getLatestJob(type?: JobType) {
+  const db = getFirestoreAdmin();
+  let query = db.collection('jobs').orderBy('startedAt', 'desc').limit(1);
+  if (type) query = db.collection('jobs').where('type', '==', type).orderBy('startedAt', 'desc').limit(1);
+  const snap = await query.get();
+  if (snap.empty) return null;
+  return snap.docs[0].data() as JobDoc;
+}
+
+export async function getJobById(jobId: string) {
+  const db = getFirestoreAdmin();
+  const snap = await db.collection('jobs').doc(jobId).get();
+  return snap.exists ? (snap.data() as JobDoc) : null;
+}
+
+export async function requestStopJob(jobId: string) {
+  const db = getFirestoreAdmin();
+  await db.collection('jobs').doc(jobId).set({
+    stopRequested: true,
+    updatedAt: new Date().toISOString(),
+  }, { merge: true });
 }
 
 export async function getFacilityByPfctSn(pfctSn: number) {
