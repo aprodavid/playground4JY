@@ -49,7 +49,7 @@ export async function POST(req: Request) {
 
     const baselineMeta = await getCacheMeta(BASELINE_META_KEY);
     if (!baselineMeta || baselineMeta.baselineStatus !== 'success') {
-      return jsonOk({ message: '기준선 캐시가 없어 ride 캐시를 갱신할 수 없습니다. 먼저 기준선 캐시를 빌드하세요.', rideStatus: 'idle' }, 409);
+      return jsonOk({ message: '기준선 캐시가 없어 ride 캐시를 갱신할 수 없습니다. 먼저 파일 import로 기준선 캐시를 생성하세요.', rideStatus: 'idle' }, 409);
     }
 
     const facilities = await getAllFacilities();

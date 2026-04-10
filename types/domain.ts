@@ -107,6 +107,13 @@ export type SearchResult = {
   recommended: boolean;
 };
 
+export type ImportProgress = {
+  total: number;
+  processed: number;
+  success: number;
+  failure: number;
+};
+
 export type CacheMetaDoc = {
   regionKey: string;
   lastBuiltAt: string;
@@ -132,6 +139,7 @@ export type CacheMetaDoc = {
   stopRequested?: boolean;
 
   baselineStatus?: 'idle' | 'running' | 'success' | 'error' | 'stopped';
+  baselineSource?: 'file-import' | 'api-crawl' | 'none';
   baselinePagesFetched?: number;
   baselineRawFacilityCount?: number;
   baselineFilteredFacilityCount?: number;
@@ -144,6 +152,7 @@ export type CacheMetaDoc = {
   baselineTotalPages?: number | null;
   baselineSampleMatchedRegions?: string[];
   baselineUnmatchedReasonCount?: Record<string, number>;
+  baselineImportProgress?: ImportProgress;
 
   rideStatus?: 'idle' | 'running' | 'success' | 'error' | 'stopped';
   rideStartedAt?: string;

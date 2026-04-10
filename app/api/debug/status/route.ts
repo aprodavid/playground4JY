@@ -47,6 +47,11 @@ export async function GET() {
     counts: { facilities: 0, rideCache: 0, cacheMeta: 0, sigunguIndex: 0 },
     latestCacheBuild: null as Awaited<ReturnType<typeof getLatestCacheMeta>>,
     baselineMeta: null as Awaited<ReturnType<typeof getCacheMeta>>,
+
+    baseline: {
+      status: null as string | null,
+      source: null as string | null,
+    },
   };
 
   try {
@@ -101,6 +106,8 @@ export async function GET() {
     result.counts = counts;
     result.latestCacheBuild = latest;
     result.baselineMeta = baseline;
+    result.baseline.status = baseline?.baselineStatus ?? null;
+    result.baseline.source = baseline?.baselineSource ?? 'none';
   } catch (error) {
     result.firebase.ok = false;
     result.firebase.error = error instanceof Error ? error.message : 'unknown error';

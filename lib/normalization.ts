@@ -64,7 +64,7 @@ function compact(text: string): string {
   return text.replace(/\s+/g, '');
 }
 
-export function normalizeSidoName(input?: string): string {
+export function normalizeSido(input?: string): string {
   const value = parseText(input);
   if (!value) return '';
 
@@ -80,7 +80,7 @@ export function normalizeSidoName(input?: string): string {
   return value;
 }
 
-function normalizeSigunguName(input?: string): string {
+export function normalizeSigungu(input?: string): string {
   const value = parseText(input);
   if (!value) return '';
   return value.replace(/\s+/g, '');
@@ -95,30 +95,25 @@ function secondAddressToken(address: string): string | undefined {
   return parseText(address.split(' ').slice(1, 2)[0]);
 }
 
+function getField(raw: Record<string, unknown>, aliases: string[]) {
+  for (const alias of aliases) {
+    if (raw[alias] !== undefined && raw[alias] !== null) return raw[alias];
+  }
+  return undefined;
+}
+
 export function extractRegionFromRaw(raw: Record<string, unknown>) {
-  const address = parseText(raw.rdnmadr) ?? parseText(raw.lnmadr) ?? parseText(raw.addr) ?? parseText(raw.detailAddr) ?? '';
+  const address = parseText(getField(raw, ['rdnmadr', 'lnmadr', 'addr', 'detailAddr', 'address', '소재지도로명주소', '소재지지번주소'])) ?? '';
 
-  const sidoCandidate =
-    parseText(raw.ctprvnNm) ??
-    parseText(raw.ctprvnNmCdNm) ??
-    parseText(raw.rgnNm) ??
-    parseText(raw.region) ??
-    firstAddressToken(address) ??
-    '';
+  const explicitSido = parseText(getField(raw, ['sido', '시도', 'ctprvnNm', 'ctprvnNmCdNm', 'rgnNm', 'region']));
+  const explicitSigungu = parseText(getField(raw, ['sigungu', '시군구', 'signguNm', 'sigunguNm', 'sggNm', 'signguNmCdNm', 'district', 'county']));
 
-  const sigunguCandidate =
-    parseText(raw.signguNm) ??
-    parseText(raw.sigunguNm) ??
-    parseText(raw.sggNm) ??
-    parseText(raw.signguNmCdNm) ??
-    parseText(raw.district) ??
-    parseText(raw.county) ??
-    secondAddressToken(address) ??
-    '';
+  const sidoCandidate = explicitSido ?? firstAddressToken(address) ?? '';
+  const sigunguCandidate = explicitSigungu ?? secondAddressToken(address) ?? '';
 
   return {
-    sido: normalizeSidoName(sidoCandidate),
-    sigungu: normalizeSigunguName(sigunguCandidate),
+    sido: normalizeSido(sidoCandidate),
+    sigungu: normalizeSigungu(sigunguCandidate),
     address,
     rawSido: sidoCandidate,
     rawSigungu: sigunguCandidate,
@@ -127,31 +122,38 @@ export function extractRegionFromRaw(raw: Record<string, unknown>) {
 
 export function matchesSelectedRegion(raw: Record<string, unknown>, sido: string, sigungu?: string): boolean {
   const region = extractRegionFromRaw(raw);
-  if (!region.sido || !normalizeSidoName(sido)) return false;
-  if (normalizeSidoName(region.sido) !== normalizeSidoName(sido)) return false;
-  if (sigungu && normalizeSigunguName(region.sigungu) !== normalizeSigunguName(sigungu)) return false;
+  if (!region.sido || !normalizeSido(sido)) return false;
+  if (normalizeSido(region.sido) !== normalizeSido(sido)) return false;
+  if (sigungu && normalizeSigungu(region.sigungu) !== normalizeSigungu(sigungu)) return false;
   return true;
 }
 
+function normalizeInstallPlaceCode(input: unknown): InstallPlaceCode {
+  const raw = String(input ?? '').trim();
+  if (raw === 'A022' || raw === 'A033' || raw === 'A003') return raw;
+  return 'A003';
+}
+
 export function toFacilityDoc(raw: Record<string, unknown>, isExcellent: boolean): FacilityDoc {
-  const areaValue = parseNumber(raw.ar as string | number | undefined);
+  const areaValue = parseNumber(getField(raw, ['ar', 'area', '면적']));
   const areaMissing = areaValue === undefined;
 
   const region = extractRegionFromRaw(raw);
-  const installYear = parseNumber(raw.instlYy);
-  const lat = parseNumber(raw.latitude);
-  const lng = parseNumber(raw.longitude);
+  const installYear = parseNumber(getField(raw, ['instlYy', 'installYear', '설치연도']));
+  const lat = parseNumber(getField(raw, ['latitude', 'lat', '위도']));
+  const lng = parseNumber(getField(raw, ['longitude', 'lng', '경도']));
+  const pfctSn = Number(getField(raw, ['pfctSn', 'pfct_sn', '시설일련번호', '시설번호']));
 
   return stripUndefinedDeep({
-    pfctSn: Number(raw.pfctSn),
-    facilityName: parseText(raw.pfctNm) ?? '이름없음',
+    pfctSn,
+    facilityName: parseText(getField(raw, ['pfctNm', 'facilityName', '시설명'])) ?? '이름없음',
     sido: region.sido,
     sigungu: region.sigungu,
     address: region.address,
     normalizedAddress: normalizeAddress(region.address),
     lat,
     lng,
-    installPlaceCode: String(raw.inslPlcSeCd ?? 'A003') as InstallPlaceCode,
+    installPlaceCode: normalizeInstallPlaceCode(getField(raw, ['inslPlcSeCd', 'installPlaceCode', '설치장소코드'])),
     installYear,
     area: areaValue ?? 400,
     areaMissing,
@@ -179,4 +181,64 @@ export function dedupeByCoordinate<T extends { lat?: number; lng?: number; pfctS
   }
 
   return selected;
+}
+
+export function parseUploadText(fileName: string, text: string): Record<string, unknown>[] {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith('.json')) {
+    const json = JSON.parse(text) as unknown;
+    if (Array.isArray(json)) return json as Record<string, unknown>[];
+    if (json && typeof json === 'object') {
+      const obj = json as Record<string, unknown>;
+      if (Array.isArray(obj.items)) return obj.items as Record<string, unknown>[];
+      if (obj.response && typeof obj.response === 'object') {
+        const maybeItems = (obj.response as { body?: { items?: { item?: unknown } } }).body?.items?.item;
+        if (Array.isArray(maybeItems)) return maybeItems as Record<string, unknown>[];
+        if (maybeItems && typeof maybeItems === 'object') return [maybeItems as Record<string, unknown>];
+      }
+    }
+    return [];
+  }
+
+  if (lower.endsWith('.csv')) {
+    const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+    if (lines.length <= 1) return [];
+    const headers = splitCsvLine(lines[0]);
+    return lines.slice(1).map((line) => {
+      const values = splitCsvLine(line);
+      const row: Record<string, unknown> = {};
+      headers.forEach((h, idx) => {
+        row[h.trim()] = values[idx]?.trim() ?? '';
+      });
+      return row;
+    });
+  }
+
+  throw new Error('지원하지 않는 파일 형식입니다. JSON 또는 CSV 파일을 사용하세요.');
+}
+
+function splitCsvLine(line: string): string[] {
+  const cols: string[] = [];
+  let current = '';
+  let inQuote = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    if (char === '"') {
+      if (inQuote && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuote = !inQuote;
+      }
+      continue;
+    }
+    if (char === ',' && !inQuote) {
+      cols.push(current);
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  cols.push(current);
+  return cols;
 }
