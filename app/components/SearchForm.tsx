@@ -16,7 +16,17 @@ type SearchResponse = {
 type StatusResponse = {
   env: Record<string, boolean>;
   firebase: { ok: boolean; error: string | null };
-  publicApi: { ok: boolean; baseUrl: string | null; hostname: string | null };
+  publicApi: {
+    ok: boolean;
+    baseUrl: string | null;
+    endpoint: string;
+    finalUrl: string | null;
+    keyFallback: { rawAttempted: boolean; rawSuccess: boolean; encodedAttempted: boolean; encodedSuccess: boolean };
+    status: number | null;
+    parseOk: boolean;
+    errorType: string | null;
+    errorMessage: string | null;
+  };
   counts: { facilities: number; rideCache: number; cacheMeta: number };
   latestCacheBuild: CacheMetaDoc | null;
 };
@@ -72,12 +82,16 @@ export default function SearchForm() {
     fetch(`/api/sigungu?sido=${encodeURIComponent(sido)}`)
       .then(async (r) => {
         const json = await r.json();
-        if (!r.ok) throw new Error(json.message ?? 'sigungu load failed');
+        if (!r.ok) {
+          const detail = [json.errorType, json.status ? `HTTP ${json.status}` : null, json.endpoint].filter(Boolean).join(' / ');
+          throw new Error(detail ? `${json.message ?? 'sigungu load failed'} (${detail})` : (json.message ?? 'sigungu load failed'));
+        }
         return json;
       })
       .then((d) => {
         setSigunguList(d.sigungu ?? []);
-        setSigunguMessage(d.message ?? ((d.sigungu?.length ?? 0) > 0 ? '' : '해당 시/도의 시/군/구 데이터가 없습니다.'));
+        const detail = d.errorType ? ` [${d.errorType}${d.status ? ` / HTTP ${d.status}` : ''}]` : '';
+        setSigunguMessage(d.message ? `${d.message}${detail}` : ((d.sigungu?.length ?? 0) > 0 ? '' : '해당 시/도의 시/군/구 데이터가 없습니다.'));
       })
       .catch((e) => {
         setSigunguMessage(e instanceof Error ? e.message : '시/군/구를 불러오지 못했습니다.');
@@ -141,7 +155,10 @@ export default function SearchForm() {
         body: JSON.stringify({ sido, sigungu: sigungu || undefined }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.message ?? '관리자 액션 실패');
+      if (!res.ok) {
+        const detailParts = [json.errorType, json.status ? `HTTP ${json.status}` : null, json.endpoint, json.detailMessage].filter(Boolean);
+        throw new Error(detailParts.length > 0 ? detailParts.join(' / ') : (json.message ?? '관리자 액션 실패'));
+      }
       setGlobalMessage(json.message ?? `${action === 'region' ? '지역 캐시 빌드' : 'ride 캐시 갱신'} 완료`);
       await refreshStatus();
     } catch (error) {
@@ -173,6 +190,9 @@ export default function SearchForm() {
         <button onClick={refreshStatus} disabled={loadingStatus} className="mt-3 rounded border px-3 py-1 text-sm">
           {loadingStatus ? '상태 조회 중...' : '상태 새로고침'}
         </button>
+        {status?.publicApi.errorMessage && (
+          <p className="mt-2 text-xs text-red-700">공공데이터 진단: {status.publicApi.errorMessage} ({status.publicApi.errorType ?? 'unknown'})</p>
+        )}
       </section>
 
       <section className="rounded-xl bg-white p-4 shadow">

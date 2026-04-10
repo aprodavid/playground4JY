@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getFacilitiesByRegion } from '@/lib/firestore-repo';
-import { fetchRide4 } from '@/lib/public-data';
+import { fetchRide4, PublicDataError } from '@/lib/public-data';
 import { upsertRideCache } from '@/lib/firestore-repo';
 import { isMissingEnvError } from '@/lib/env';
 import { RIDE_WHITELIST } from '@/types/domain';
@@ -56,6 +56,16 @@ export async function POST(req: Request) {
   } catch (error) {
     if (isMissingEnvError(error)) {
       return NextResponse.json({ message: error.message }, { status: 500 });
+    }
+    if (error instanceof PublicDataError) {
+      return NextResponse.json({
+        message: 'refresh-rides failed',
+        errorType: error.detail.type,
+        status: error.detail.status ?? null,
+        endpoint: error.detail.endpoint,
+        attempts: error.detail.attempts ?? [],
+        detailMessage: error.message,
+      }, { status: 502 });
     }
     return NextResponse.json({ message: 'refresh-rides failed' }, { status: 500 });
   }
