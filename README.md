@@ -6,6 +6,7 @@
 - Next.js (App Router)
 - TypeScript
 - Tailwind CSS
+- ESLint (flat config)
 - Firebase Firestore (캐시/저장소)
 
 ## 로컬 실행 방법
@@ -15,41 +16,18 @@ cp .env.example .env.local
 npm run dev
 ```
 
-## Firebase 설정 방법
-1. Firebase 프로젝트 생성
-2. Firestore Database 활성화 (Native mode)
-3. 서비스 계정 키(JSON) 발급
-4. `.env.local`에 `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` 설정
+## 필수 환경변수
+- `PUBLIC_DATA_BASE_URL`
+- `PUBLIC_DATA_SERVICE_KEY`
+- `FIREBASE_PROJECT_ID`
+- `FIREBASE_CLIENT_EMAIL`
+- `FIREBASE_PRIVATE_KEY`
 
-## Vercel 배포 방법
-1. GitHub 저장소를 Vercel에 Import
-2. Environment Variables에 `.env.example`의 키 전부 등록
-3. Build Command: `npm run build`, Output: `.next`
-4. 배포 후 첫 진입에서 운영 패널로 지역 캐시 빌드
-5. Vercel/로컬 npm 해석 일치를 위해 `package.json`의 `packageManager: npm@10.9.2`를 유지
-
-### 배포 안정성 메모 (중요)
-- Firebase/Public Data 환경변수 검사는 **빌드 시점이 아닌 API Route 실행 시점**에 수행됩니다.
-- 환경변수가 누락되어도 빌드 자체는 실패하지 않으며, 실제 API 호출 시 JSON 에러를 반환합니다.
-- Firebase 관련 Route Handler는 모두 `runtime = 'nodejs'`로 동작합니다.
-- `FIREBASE_PRIVATE_KEY`는 `\\n` 문자열 줄바꿈을 서버에서 자동으로 실제 줄바꿈으로 복원합니다.
-
-## Firestore 컬렉션 설명
-- `facilities`: pfc3 + exfc5 결합/정규화 시설 데이터
-- `rideCache`: ride4 캐시(화이트리스트 필터 결과 포함)
-- `cacheMeta`: 지역별 캐시 빌드 메타데이터
-
-## 공공데이터 API 키 설정 방법
-- `PUBLIC_DATA_SERVICE_KEY`에 인증키를 입력
-- API base URL은 `PUBLIC_DATA_BASE_URL`로 관리
-- 키는 코드에 하드코딩하지 않고 환경변수로만 사용
-- base URL은 `pfc3 / ride4 / exfc5` 경로를 뒤에 붙여 호출되며, 끝 슬래시는 있어도/없어도 동작하도록 처리되어 있습니다.
-
-## 사용자/운영 흐름 (v1)
-1. 시/도 선택 (정적 목록으로 항상 표시)
-2. 시/군/구 선택 (Firestore 캐시 우선, 없으면 공공데이터 API 조회)
-3. 캐시 상태 확인 및 필요 시 캐시 빌드
-4. 검색 실행
+## 운영 플로우(v1)
+1. 시/도 정적 목록 조회
+2. 시/군/구 조회(Firestore 우선, 없으면 공공데이터 fallback)
+3. 운영 패널에서 캐시 빌드/ride 캐시 갱신/상태 새로고침
+4. 검색 실행 시 캐시 자동 빌드 시도 및 안내
 
 ## API 엔드포인트
 - `GET /api/sido`
@@ -61,36 +39,8 @@ npm run dev
 - `GET /api/debug/status`
 - `GET /api/health`
 
-## 상태/진단 응답
-`/api/debug/status` 또는 `/api/health`는 아래를 JSON으로 제공합니다.
-- 환경변수 준비 여부
-- Firebase 연결 가능 여부
-- 공공데이터 API base URL 형식 확인
-- Firestore 컬렉션 문서 수 요약
-- 마지막 캐시 빌드 메타데이터
-
-## 현재 v1 한계
-- 설치장소 코드 3종(A003/A022/A033)만 지원
-- ride4 화이트리스트 코드만 반영
-- 경고/추천 규칙은 v1 기준 정적 로직
-
-## 추후 개선 포인트
-- 지역 캐시 워커(배치/스케줄) 고도화
-- 가중치 프리셋 저장 및 A/B 테스트
-- 지도 기반 시각화 및 상세 비교 화면
-- 데이터 품질 태그 정교화(v7.1 규칙 확장)
-
-## npm Invalid Version 점검 가이드
-Vercel `npm install` 단계에서 `Invalid Version`이 발생할 때를 대비해 아래 점검을 수행합니다.
-
-- `npm run check:package-metadata`
-  - `package.json`의 `version`, `dependencies/devDependencies/peerDependencies/overrides/resolutions` 검사
-  - `package-lock.json`의 `packages[""]` 및 `node_modules/*` 엔트리의 `name/version` 검사
-  - 빈 문자열/비정상 semver 문자열 검사
-  - `next=15.3.8`, `eslint-config-next=15.3.8`, `react=19.0.0`, `react-dom=19.0.0` 정합성 검사
-
-권장 순서:
-1. `npm run check:package-metadata`
-2. `npm install`
-3. `npm run lint`
-4. `npm run build`
+## 배포 안정성 메모
+- Firebase/Public Data 환경변수 검사는 빌드 시점이 아닌 API Route 실행 시점에 수행됩니다.
+- Firebase 관련 Route Handler는 모두 `runtime = 'nodejs'`를 유지합니다.
+- `FIREBASE_PRIVATE_KEY`는 `\\n` 문자열 줄바꿈을 서버에서 실제 줄바꿈으로 복원합니다.
+- 공공데이터 API는 브라우저에서 직접 호출하지 않고 Route Handler를 통해서만 호출됩니다.
