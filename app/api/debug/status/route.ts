@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getEnv } from '@/lib/env';
-import { getCollectionCounts, getLatestCacheMeta } from '@/lib/firestore-repo';
+import { BASELINE_META_KEY, getCollectionCounts, getLatestCacheMeta, getCacheMeta } from '@/lib/firestore-repo';
 import { getFirestoreAdmin } from '@/lib/firestore';
 import { fetchPfc3WithMeta, PublicDataError } from '@/lib/public-data';
 
@@ -44,8 +44,9 @@ export async function GET() {
       errorType: null as string | null,
       errorMessage: null as string | null,
     },
-    counts: { facilities: 0, rideCache: 0, cacheMeta: 0 },
+    counts: { facilities: 0, rideCache: 0, cacheMeta: 0, sigunguIndex: 0 },
     latestCacheBuild: null as Awaited<ReturnType<typeof getLatestCacheMeta>>,
+    baselineMeta: null as Awaited<ReturnType<typeof getCacheMeta>>,
   };
 
   try {
@@ -92,8 +93,14 @@ export async function GET() {
     const db = getFirestoreAdmin();
     await db.collection('facilities').limit(1).get();
     result.firebase.ok = true;
-    result.counts = await getCollectionCounts();
-    result.latestCacheBuild = await getLatestCacheMeta();
+    const [counts, latest, baseline] = await Promise.all([
+      getCollectionCounts(),
+      getLatestCacheMeta(),
+      getCacheMeta(BASELINE_META_KEY),
+    ]);
+    result.counts = counts;
+    result.latestCacheBuild = latest;
+    result.baselineMeta = baseline;
   } catch (error) {
     result.firebase.ok = false;
     result.firebase.error = error instanceof Error ? error.message : 'unknown error';

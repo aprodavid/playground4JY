@@ -1,27 +1,18 @@
-import { z } from 'zod';
 import { isMissingEnvError } from '@/lib/env';
-import { jsonError, jsonOk, parseJsonBody } from '@/lib/admin-json';
+import { jsonError, jsonOk } from '@/lib/admin-json';
 import { initRefreshRegionJob, mapJobError } from '@/lib/refresh-region-job';
-
-const schema = z.object({ sido: z.string().min(1), sigungu: z.string().optional() });
 
 export const runtime = 'nodejs';
 
-export async function POST(req: Request) {
+export async function POST() {
   try {
-    const parsed = schema.safeParse(await parseJsonBody(req));
-    if (!parsed.success) {
-      return jsonOk({ message: 'invalid payload', errorType: 'validation', errors: parsed.error.flatten() }, 400);
-    }
-
-    const job = await initRefreshRegionJob(parsed.data.sido, parsed.data.sigungu);
+    const job = await initRefreshRegionJob();
     return jsonOk({
-      message: 'refresh-region job started',
+      message: 'baseline facilities build started',
       regionKey: job.regionKey,
       jobId: job.jobId,
       status: job.status,
       currentStage: job.currentStage,
-      selectedRegion: job.selectedRegion,
       startedAt: job.startedAt,
       updatedAt: job.updatedAt,
       done: job.done,

@@ -126,7 +126,34 @@ export type CacheMetaDoc = {
   selectedRegion?: { sido: string; sigungu?: string };
   buildDurationMs?: number;
   lastBuildStatus: 'ok' | 'error';
-  status?: 'idle' | 'running' | 'success' | 'error';
+  status?: 'idle' | 'running' | 'success' | 'error' | 'stopped';
   done?: boolean;
   lastError?: string | null;
+  stopRequested?: boolean;
+
+  baselineStatus?: 'idle' | 'running' | 'success' | 'error' | 'stopped';
+  baselinePagesFetched?: number;
+  baselineRawFacilityCount?: number;
+  baselineFilteredFacilityCount?: number;
+  baselineStartedAt?: string;
+  baselineUpdatedAt?: string;
+  baselineLastError?: string | null;
+  baselineCurrentStage?: string;
+  baselineCurrentInstallPlace?: string | null;
+  baselineCurrentPage?: number;
+  baselineTotalPages?: number | null;
+  baselineSampleMatchedRegions?: string[];
+  baselineUnmatchedReasonCount?: Record<string, number>;
+
+  rideStatus?: 'idle' | 'running' | 'success' | 'error' | 'stopped';
+  rideStartedAt?: string;
+  rideUpdatedAt?: string;
+  rideLastError?: string | null;
+  rideProgress?: {
+    totalTargets: number;
+    processedTargets: number;
+    updatedTargets: number;
+    errorTargets: number;
+    skippedExistingTargets: number;
+  };
 };

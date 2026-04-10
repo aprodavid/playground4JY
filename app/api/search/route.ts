@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { DEFAULT_WEIGHTS, RIDE_WHITELIST, type InstallPlaceCode, type RideCacheDoc } from '@/types/domain';
-import { fetchExfc5AllPages, fetchPfc3AcrossInstallPlaces, fetchRide4, PublicDataError } from '@/lib/public-data';
+import { DEFAULT_WEIGHTS, type InstallPlaceCode } from '@/types/domain';
 import { isMissingEnvError } from '@/lib/env';
-import { getFacilitiesByRegion, getRideCaches, setCacheMeta, upsertRideCache, upsertFacilities } from '@/lib/firestore-repo';
+import { BASELINE_META_KEY, getCacheMeta, getFacilitiesByRegion, getRideCaches, upsertRideCache } from '@/lib/firestore-repo';
 import { scoreFacility } from '@/lib/scoring';
-import { dedupeByCoordinate, matchesSelectedRegion, toFacilityDoc } from '@/lib/normalization';
+import { fetchRide4, PublicDataError } from '@/lib/public-data';
+import { RIDE_WHITELIST } from '@/types/domain';
 
 const schema = z.object({
   sido: z.string().min(1),
@@ -22,32 +22,31 @@ const schema = z.object({
 });
 export const runtime = 'nodejs';
 
-async function buildRideCache(pfctSn: number): Promise<RideCacheDoc> {
+async function buildRideCache(pfctSn: number) {
   try {
     const rides = await fetchRide4(pfctSn);
-    const rawCount = rides.length;
     const filtered = rides.filter((r) => RIDE_WHITELIST.includes(String(r.playkndCd) as never));
     const types = [...new Set(filtered.map((r) => String(r.playkndCd)))];
-    const doc: RideCacheDoc = {
+    const doc: import('@/types/domain').RideCacheDoc = {
       pfctSn,
-      rawCount,
+      rawCount: rides.length,
       filteredCount: filtered.length,
       typeCount: types.length,
       types,
       updatedAt: new Date().toISOString(),
-      status: filtered.length > 0 ? 'ok' : 'empty',
+      status: filtered.length > 0 ? 'ok' : 'empty' as const,
     };
     await upsertRideCache(doc);
     return doc;
   } catch (error) {
-    const doc: RideCacheDoc = {
+    const doc: import('@/types/domain').RideCacheDoc = {
       pfctSn,
       rawCount: 0,
       filteredCount: 0,
       typeCount: 0,
       types: [],
       updatedAt: new Date().toISOString(),
-      status: 'error',
+      status: 'error' as const,
       lastError: error instanceof Error ? error.message : 'unknown error',
     };
     await upsertRideCache(doc);
@@ -55,49 +54,28 @@ async function buildRideCache(pfctSn: number): Promise<RideCacheDoc> {
   }
 }
 
-async function ensureFacilityCache(sido: string, sigungu?: string) {
-  const regionKey = `${sido}:${sigungu ?? 'ALL'}`;
-  const [pfc3, exfc5] = await Promise.all([
-    fetchPfc3AcrossInstallPlaces({ pageSize: 500 }),
-    fetchExfc5AllPages({ ctprvnNm: sido, ...(sigungu ? { signguNm: sigungu } : {}) }, { pageSize: 500 }),
-  ]);
-
-  const filteredRows = pfc3.items.filter((row) => matchesSelectedRegion(row, sido, sigungu));
-  const excellentSet = new Set(exfc5.items.map((x) => Number(x.pfctSn)));
-  const normalized = filteredRows.map((row) => toFacilityDoc(row, excellentSet.has(Number(row.pfctSn))));
-  const deduped = dedupeByCoordinate(normalized);
-  await upsertFacilities(deduped);
-  await setCacheMeta(regionKey, {
-    regionKey,
-    lastBuiltAt: new Date().toISOString(),
-    facilitiesCount: deduped.length,
-    excellentCount: deduped.filter((x) => x.isExcellent).length,
-    pagesFetched: pfc3.pagesFetched + exfc5.pagesFetched,
-    rawFacilityCount: pfc3.items.length,
-    filteredFacilityCount: filteredRows.length,
-    selectedRegion: sigungu ? { sido, sigungu } : { sido },
-    lastBuildStatus: 'ok',
-  });
-  return deduped.length;
-}
-
 export async function POST(req: Request) {
   try {
-    const payload = await req.json();
-    const parsed = schema.safeParse(payload);
+    const parsed = schema.safeParse(await req.json());
     if (!parsed.success) return NextResponse.json({ errors: parsed.error.flatten() }, { status: 400 });
 
     const { sido, sigungu, installPlaces, installYearFrom, topN, weights } = parsed.data;
     const ws = weights ?? DEFAULT_WEIGHTS;
 
-    let facilities = await getFacilitiesByRegion(sido, sigungu);
-    let autoBuilt = false;
-
-    if (facilities.length === 0) {
-      const builtCount = await ensureFacilityCache(sido, sigungu);
-      autoBuilt = builtCount > 0;
-      facilities = await getFacilitiesByRegion(sido, sigungu);
+    const baselineMeta = await getCacheMeta(BASELINE_META_KEY);
+    if (!baselineMeta || baselineMeta.baselineStatus !== 'success') {
+      return NextResponse.json({
+        summary: { totalCandidates: 0, recommended: 0 },
+        excellentSection: [],
+        top: [],
+        nearMiss: [],
+        needsCacheBuild: true,
+        message: '시설 기준선 캐시가 준비되지 않았습니다. 운영 패널에서 "기준선 캐시 빌드"를 먼저 실행하세요.',
+        emptyReason: baselineMeta?.baselineStatus === 'running' ? 'baseline-running' : 'baseline-not-ready',
+      }, { status: 409 });
     }
+
+    let facilities = await getFacilitiesByRegion(sido, sigungu);
 
     if (facilities.length === 0) {
       return NextResponse.json({
@@ -105,8 +83,9 @@ export async function POST(req: Request) {
         excellentSection: [],
         top: [],
         nearMiss: [],
-        message: '선택한 지역의 시설 캐시가 비어 있습니다. 운영 패널에서 지역 캐시를 먼저 빌드하세요.',
-        needsCacheBuild: true,
+        needsCacheBuild: false,
+        emptyReason: sigungu ? 'region-match-zero' : 'sido-match-zero',
+        message: '기준선 캐시는 존재하지만 선택한 지역에 매칭되는 시설이 없습니다. 지역 필터를 확인하세요.',
       });
     }
 
@@ -137,9 +116,7 @@ export async function POST(req: Request) {
       excellentSection: scored.filter((x) => x.isExcellent).slice(0, 20),
       top: scored.slice(0, topN),
       nearMiss: scored.slice(topN, topN + 5),
-      autoBuiltCache: autoBuilt,
       needsCacheBuild: false,
-      message: autoBuilt ? '시설 캐시가 없어 자동으로 빌드한 뒤 검색을 진행했습니다.' : undefined,
     });
   } catch (error) {
     if (isMissingEnvError(error)) {

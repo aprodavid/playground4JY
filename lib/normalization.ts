@@ -1,4 +1,4 @@
-import { type FacilityDoc, type InstallPlaceCode } from '@/types/domain';
+import { KOREA_SIDO_LIST, type FacilityDoc, type InstallPlaceCode } from '@/types/domain';
 
 function parseNumber(input: unknown): number | undefined {
   if (typeof input === 'number') return Number.isFinite(input) ? input : undefined;
@@ -40,48 +40,96 @@ export function stripUndefinedDeep<T>(value: T): T {
   return value;
 }
 
-const SIDO_SUFFIXES = ['특별시', '광역시', '특별자치시', '특별자치도', '자치도', '도', '시'];
+const SIDO_ALIAS_MAP: Record<string, string> = {
+  서울: '서울특별시',
+  부산: '부산광역시',
+  대구: '대구광역시',
+  인천: '인천광역시',
+  광주: '광주광역시',
+  대전: '대전광역시',
+  울산: '울산광역시',
+  세종: '세종특별자치시',
+  경기: '경기도',
+  강원: '강원특별자치도',
+  충북: '충청북도',
+  충남: '충청남도',
+  전북: '전북특별자치도',
+  전남: '전라남도',
+  경북: '경상북도',
+  경남: '경상남도',
+  제주: '제주특별자치도',
+};
+
+function compact(text: string): string {
+  return text.replace(/\s+/g, '');
+}
+
+export function normalizeSidoName(input?: string): string {
+  const value = parseText(input);
+  if (!value) return '';
+
+  if (SIDO_ALIAS_MAP[value]) return SIDO_ALIAS_MAP[value];
+
+  const compactValue = compact(value);
+  const exact = KOREA_SIDO_LIST.find((sido) => compact(sido) === compactValue);
+  if (exact) return exact;
+
+  const fromPrefix = Object.entries(SIDO_ALIAS_MAP).find(([, full]) => compact(full).startsWith(compactValue));
+  if (fromPrefix) return fromPrefix[1];
+
+  return value;
+}
+
+function normalizeSigunguName(input?: string): string {
+  const value = parseText(input);
+  if (!value) return '';
+  return value.replace(/\s+/g, '');
+}
 
 function firstAddressToken(address: string): string | undefined {
   const first = parseText(address)?.split(' ')[0];
   return parseText(first);
 }
 
-function looksLikeSido(text?: string): boolean {
-  if (!text) return false;
-  return SIDO_SUFFIXES.some((suffix) => text.endsWith(suffix));
+function secondAddressToken(address: string): string | undefined {
+  return parseText(address.split(' ').slice(1, 2)[0]);
 }
 
 export function extractRegionFromRaw(raw: Record<string, unknown>) {
-  const address = parseText(raw.rdnmadr) ?? parseText(raw.lnmadr) ?? parseText(raw.addr) ?? '';
+  const address = parseText(raw.rdnmadr) ?? parseText(raw.lnmadr) ?? parseText(raw.addr) ?? parseText(raw.detailAddr) ?? '';
 
-  const sido =
+  const sidoCandidate =
     parseText(raw.ctprvnNm) ??
+    parseText(raw.ctprvnNmCdNm) ??
     parseText(raw.rgnNm) ??
     parseText(raw.region) ??
-    (looksLikeSido(firstAddressToken(address)) ? firstAddressToken(address) : undefined) ??
+    firstAddressToken(address) ??
     '';
 
-  const sigungu =
+  const sigunguCandidate =
     parseText(raw.signguNm) ??
     parseText(raw.sigunguNm) ??
     parseText(raw.sggNm) ??
+    parseText(raw.signguNmCdNm) ??
     parseText(raw.district) ??
     parseText(raw.county) ??
-    parseText(address.split(' ').slice(1, 2)[0]) ??
+    secondAddressToken(address) ??
     '';
 
   return {
-    sido,
-    sigungu,
+    sido: normalizeSidoName(sidoCandidate),
+    sigungu: normalizeSigunguName(sigunguCandidate),
     address,
+    rawSido: sidoCandidate,
+    rawSigungu: sigunguCandidate,
   };
 }
 
 export function matchesSelectedRegion(raw: Record<string, unknown>, sido: string, sigungu?: string): boolean {
   const region = extractRegionFromRaw(raw);
-  if (region.sido !== sido) return false;
-  if (sigungu && region.sigungu !== sigungu) return false;
+  if (!region.sido || !normalizeSidoName(sido)) return false;
+  if (normalizeSidoName(region.sido) !== normalizeSidoName(sido)) return false;
+  if (sigungu && normalizeSigunguName(region.sigungu) !== normalizeSigunguName(sigungu)) return false;
   return true;
 }
 
@@ -112,18 +160,18 @@ export function toFacilityDoc(raw: Record<string, unknown>, isExcellent: boolean
   });
 }
 
-export function dedupeByCoordinate(input: FacilityDoc[]): FacilityDoc[] {
-  const groups = new Map<string, FacilityDoc[]>();
+export function dedupeByCoordinate<T extends { lat?: number; lng?: number; pfctSn: number; address?: string }>(input: T[]): T[] {
+  const groups = new Map<string, T[]>();
   for (const f of input) {
     const key = f.lat !== undefined && f.lng !== undefined ? `${f.lat.toFixed(6)}:${f.lng.toFixed(6)}` : `no:${f.pfctSn}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(f);
   }
 
-  const selected: FacilityDoc[] = [];
+  const selected: T[] = [];
   for (const candidates of groups.values()) {
     const picked = candidates.sort((a, b) => {
-      const specificityDiff = addressSpecificity(b.address) - addressSpecificity(a.address);
+      const specificityDiff = addressSpecificity(b.address ?? '') - addressSpecificity(a.address ?? '');
       if (specificityDiff !== 0) return specificityDiff;
       return a.pfctSn - b.pfctSn;
     })[0];
