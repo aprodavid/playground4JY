@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { dedupeByCoordinate, toFacilityDoc } from '@/lib/normalization';
-import { fetchExfc5, fetchPfc3 } from '@/lib/public-data';
+import { fetchExfc5, fetchPfc3, PublicDataError } from '@/lib/public-data';
 import { isMissingEnvError } from '@/lib/env';
 import { setCacheMeta, upsertFacilities } from '@/lib/firestore-repo';
 
@@ -10,6 +10,7 @@ export const runtime = 'nodejs';
 
 export async function POST(req: Request) {
   let regionKey = 'unknown';
+  let failingEndpoint: string | null = null;
   try {
     const parsed = schema.safeParse(await req.json());
     if (!parsed.success) return NextResponse.json({ errors: parsed.error.flatten() }, { status: 400 });
@@ -36,6 +37,10 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ regionKey, facilitiesCount: deduped.length });
   } catch (error) {
+    if (error instanceof PublicDataError) {
+      failingEndpoint = error.detail.endpoint;
+    }
+
     if (regionKey !== 'unknown') {
       await setCacheMeta(regionKey, {
         regionKey,
@@ -49,6 +54,16 @@ export async function POST(req: Request) {
     if (isMissingEnvError(error)) {
       return NextResponse.json({ message: error.message }, { status: 500 });
     }
-    return NextResponse.json({ message: 'refresh-region failed' }, { status: 500 });
+    if (error instanceof PublicDataError) {
+      return NextResponse.json({
+        message: 'refresh-region failed',
+        errorType: error.detail.type,
+        status: error.detail.status ?? null,
+        endpoint: error.detail.endpoint,
+        attempts: error.detail.attempts ?? [],
+        detailMessage: error.message,
+      }, { status: 502 });
+    }
+    return NextResponse.json({ message: 'refresh-region failed', errorType: 'unknown', endpoint: failingEndpoint }, { status: 500 });
   }
 }

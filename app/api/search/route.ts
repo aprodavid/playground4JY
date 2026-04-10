@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { DEFAULT_WEIGHTS, RIDE_WHITELIST, type InstallPlaceCode, type RideCacheDoc } from '@/types/domain';
-import { fetchExfc5, fetchPfc3, fetchRide4 } from '@/lib/public-data';
+import { fetchExfc5, fetchPfc3, fetchRide4, PublicDataError } from '@/lib/public-data';
 import { isMissingEnvError } from '@/lib/env';
 import { getFacilitiesByRegion, getRideCaches, setCacheMeta, upsertRideCache, upsertFacilities } from '@/lib/firestore-repo';
 import { scoreFacility } from '@/lib/scoring';
@@ -139,6 +139,16 @@ export async function POST(req: Request) {
   } catch (error) {
     if (isMissingEnvError(error)) {
       return NextResponse.json({ message: error.message }, { status: 500 });
+    }
+    if (error instanceof PublicDataError) {
+      return NextResponse.json({
+        message: 'search failed',
+        errorType: error.detail.type,
+        status: error.detail.status ?? null,
+        endpoint: error.detail.endpoint,
+        attempts: error.detail.attempts ?? [],
+        detailMessage: error.message,
+      }, { status: 502 });
     }
     return NextResponse.json({ message: 'search failed' }, { status: 500 });
   }
