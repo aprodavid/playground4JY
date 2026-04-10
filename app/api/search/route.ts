@@ -2,10 +2,8 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { DEFAULT_WEIGHTS, type InstallPlaceCode } from '@/types/domain';
 import { isMissingEnvError } from '@/lib/env';
-import { BASELINE_META_KEY, getCacheMeta, getFacilitiesByRegion, getRideCaches, upsertRideCache } from '@/lib/firestore-repo';
+import { BASELINE_META_KEY, getCacheMeta, getFacilitiesByRegion, getRideCaches } from '@/lib/firestore-repo';
 import { scoreFacility } from '@/lib/scoring';
-import { fetchRide4, PublicDataError } from '@/lib/public-data';
-import { RIDE_WHITELIST } from '@/types/domain';
 
 const schema = z.object({
   sido: z.string().min(1),
@@ -21,38 +19,6 @@ const schema = z.object({
   }).optional(),
 });
 export const runtime = 'nodejs';
-
-async function buildRideCache(pfctSn: number) {
-  try {
-    const rides = await fetchRide4(pfctSn);
-    const filtered = rides.filter((r) => RIDE_WHITELIST.includes(String(r.playkndCd) as never));
-    const types = [...new Set(filtered.map((r) => String(r.playkndCd)))];
-    const doc: import('@/types/domain').RideCacheDoc = {
-      pfctSn,
-      rawCount: rides.length,
-      filteredCount: filtered.length,
-      typeCount: types.length,
-      types,
-      updatedAt: new Date().toISOString(),
-      status: filtered.length > 0 ? 'ok' : 'empty' as const,
-    };
-    await upsertRideCache(doc);
-    return doc;
-  } catch (error) {
-    const doc: import('@/types/domain').RideCacheDoc = {
-      pfctSn,
-      rawCount: 0,
-      filteredCount: 0,
-      typeCount: 0,
-      types: [],
-      updatedAt: new Date().toISOString(),
-      status: 'error' as const,
-      lastError: error instanceof Error ? error.message : 'unknown error',
-    };
-    await upsertRideCache(doc);
-    return doc;
-  }
-}
 
 export async function POST(req: Request) {
   try {
@@ -70,7 +36,7 @@ export async function POST(req: Request) {
         top: [],
         nearMiss: [],
         needsCacheBuild: true,
-        message: '시설 기준선 캐시가 준비되지 않았습니다. 운영 패널에서 "기준선 캐시 빌드"를 먼저 실행하세요.',
+        message: '시설 기준선 캐시가 준비되지 않았습니다. 먼저 파일데이터를 업로드해 기준선 캐시를 생성하세요.',
         emptyReason: baselineMeta?.baselineStatus === 'running' ? 'baseline-running' : 'baseline-not-ready',
       }, { status: 409 });
     }
@@ -96,13 +62,6 @@ export async function POST(req: Request) {
     const rideCached = await getRideCaches(facilities.map((f) => f.pfctSn));
     const rideMap = new Map(rideCached.map((r) => [r.pfctSn, r]));
 
-    const missing = facilities.filter((f) => !rideMap.has(f.pfctSn));
-    const priority = missing.sort((a, b) => (b.isExcellent ? 1 : 0) - (a.isExcellent ? 1 : 0)).slice(0, 40);
-    for (const f of priority) {
-      const cache = await buildRideCache(f.pfctSn);
-      rideMap.set(f.pfctSn, cache);
-    }
-
     const scored = facilities
       .map((f) => scoreFacility(f, rideMap.get(f.pfctSn) ?? {
         pfctSn: f.pfctSn, rawCount: 0, filteredCount: 0, typeCount: 0, types: [], updatedAt: '', status: 'empty',
@@ -121,16 +80,6 @@ export async function POST(req: Request) {
   } catch (error) {
     if (isMissingEnvError(error)) {
       return NextResponse.json({ message: error.message }, { status: 500 });
-    }
-    if (error instanceof PublicDataError) {
-      return NextResponse.json({
-        message: 'search failed',
-        errorType: error.detail.type,
-        status: error.detail.status ?? null,
-        endpoint: error.detail.endpoint,
-        attempts: error.detail.attempts ?? [],
-        detailMessage: error.message,
-      }, { status: 502 });
     }
     return NextResponse.json({ message: 'search failed' }, { status: 500 });
   }

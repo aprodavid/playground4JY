@@ -7,15 +7,24 @@ function sanitizeForFirestoreWrite<T>(doc: T): T {
 }
 
 export const BASELINE_META_KEY = 'baseline:global';
+const PFC3_UPLOAD_COLLECTION = 'baselineUploadPfc3';
+const EXFC5_UPLOAD_COLLECTION = 'baselineUploadExfc5';
 
 export async function upsertFacilities(facilities: FacilityDoc[]) {
   if (facilities.length === 0) return;
   const db = getFirestoreAdmin();
-  const batch = db.batch();
-  facilities.forEach((f) => {
-    batch.set(db.collection('facilities').doc(String(f.pfctSn)), sanitizeForFirestoreWrite(f), { merge: true });
-  });
-  await batch.commit();
+  for (let i = 0; i < facilities.length; i += 400) {
+    const batch = db.batch();
+    facilities.slice(i, i + 400).forEach((f) => {
+      batch.set(db.collection('facilities').doc(String(f.pfctSn)), sanitizeForFirestoreWrite(f), { merge: true });
+    });
+    await batch.commit();
+  }
+}
+
+export async function replaceFacilities(facilities: FacilityDoc[]) {
+  await clearCollection('facilities');
+  await upsertFacilities(facilities);
 }
 
 export async function getFacilitiesByRegion(sido: string, sigungu?: string) {
@@ -67,6 +76,21 @@ export async function setSigunguIndex(sido: string, sigungu: string[]) {
   await db.collection('sigunguIndex').doc(sido).set({ sido, sigungu, updatedAt: new Date().toISOString() }, { merge: true });
 }
 
+export async function rebuildSigunguIndexFromFacilities() {
+  await clearCollection('sigunguIndex');
+  const facilities = await getAllFacilities();
+  const sigunguMap = new Map<string, Set<string>>();
+  facilities.forEach((facility) => {
+    if (!facility.sido) return;
+    if (!sigunguMap.has(facility.sido)) sigunguMap.set(facility.sido, new Set());
+    if (facility.sigungu) sigunguMap.get(facility.sido)!.add(facility.sigungu);
+  });
+
+  for (const [sido, sigunguSet] of sigunguMap.entries()) {
+    await setSigunguIndex(sido, [...sigunguSet].sort());
+  }
+}
+
 export async function getSigunguBySido(sido: string) {
   const db = getFirestoreAdmin();
   const doc = await db.collection('sigunguIndex').doc(sido).get();
@@ -112,5 +136,49 @@ export async function getFacilityByPfctSn(pfctSn: number) {
   return {
     facility: facility.exists ? (facility.data() as FacilityDoc) : null,
     ride: ride.exists ? (ride.data() as RideCacheDoc) : null,
+  };
+}
+
+export async function clearCollection(name: string) {
+  const db = getFirestoreAdmin();
+  while (true) {
+    const snap = await db.collection(name).limit(400).get();
+    if (snap.empty) break;
+    const batch = db.batch();
+    snap.docs.forEach((doc) => batch.delete(doc.ref));
+    await batch.commit();
+  }
+}
+
+export async function saveUploadRows(kind: 'pfc3' | 'exfc5', rows: Record<string, unknown>[]) {
+  const db = getFirestoreAdmin();
+  const collection = kind === 'pfc3' ? PFC3_UPLOAD_COLLECTION : EXFC5_UPLOAD_COLLECTION;
+  await clearCollection(collection);
+
+  for (let i = 0; i < rows.length; i += 400) {
+    const batch = db.batch();
+    rows.slice(i, i + 400).forEach((row, idx) => {
+      batch.set(db.collection(collection).doc(String(i + idx)), sanitizeForFirestoreWrite({ row, idx: i + idx }));
+    });
+    await batch.commit();
+  }
+}
+
+export async function getUploadRows(kind: 'pfc3' | 'exfc5') {
+  const db = getFirestoreAdmin();
+  const collection = kind === 'pfc3' ? PFC3_UPLOAD_COLLECTION : EXFC5_UPLOAD_COLLECTION;
+  const snap = await db.collection(collection).orderBy('idx', 'asc').get();
+  return snap.docs.map((d) => (d.data().row ?? {}) as Record<string, unknown>);
+}
+
+export async function getUploadCounts() {
+  const db = getFirestoreAdmin();
+  const [pfc3, exfc5] = await Promise.all([
+    db.collection(PFC3_UPLOAD_COLLECTION).count().get(),
+    db.collection(EXFC5_UPLOAD_COLLECTION).count().get(),
+  ]);
+  return {
+    pfc3: pfc3.data().count,
+    exfc5: exfc5.data().count,
   };
 }

@@ -22,25 +22,19 @@ type StatusResponse = {
   baselineMeta: CacheMetaDoc | null;
 };
 
-type BaselineStatus = {
-  status: 'idle' | 'running' | 'success' | 'error' | 'stopped';
-  currentStage?: string;
-  currentInstallPlace?: string | null;
-  currentPage?: number;
-  totalPages?: number | null;
-  baselinePagesFetched?: number;
-  baselineRawFacilityCount?: number;
-  baselineFilteredFacilityCount?: number;
-  baselineSampleMatchedRegions?: string[];
-  baselineUnmatchedReasonCount?: Record<string, number>;
-  baselineLastError?: string | null;
-  rideStatus?: string;
-  rideProgress?: { totalTargets: number; processedTargets: number; updatedTargets: number; errorTargets: number; skippedExistingTargets: number } | null;
-  rideLastError?: string | null;
-  done?: boolean;
+type ImportStatus = {
+  baselineStatus: 'idle' | 'running' | 'success' | 'error' | 'stopped';
+  baselineSource: 'file-import' | 'api-crawl' | 'none';
+  currentStage: string | null;
+  progress: { total: number; processed: number; success: number; failure: number };
+  uploadCounts: { pfc3: number; exfc5: number };
+  baselineLastError: string | null;
+  done: boolean;
 };
 
 export default function SearchForm() {
+  const [pfc3File, setPfc3File] = useState<File | null>(null);
+  const [exfc5File, setExfc5File] = useState<File | null>(null);
   const [sidoList, setSidoList] = useState<string[]>([]);
   const [sigunguList, setSigunguList] = useState<string[]>([]);
   const [sido, setSido] = useState('');
@@ -51,13 +45,13 @@ export default function SearchForm() {
   const [weights, setWeights] = useState<WeightConfig>(DEFAULT_WEIGHTS);
   const [data, setData] = useState<SearchResponse | null>(null);
   const [status, setStatus] = useState<StatusResponse | null>(null);
-  const [baseline, setBaseline] = useState<BaselineStatus | null>(null);
+  const [baseline, setBaseline] = useState<ImportStatus | null>(null);
   const [sigunguMessage, setSigunguMessage] = useState('');
   const [globalMessage, setGlobalMessage] = useState('');
   const [globalError, setGlobalError] = useState('');
   const [loadingSearch, setLoadingSearch] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState(false);
-  const [runningAdminAction, setRunningAdminAction] = useState<'' | 'baseline' | 'rides'>('');
+  const [runningAdminAction, setRunningAdminAction] = useState<'' | 'upload-pfc3' | 'upload-exfc5' | 'baseline' | 'rides'>('');
 
   useEffect(() => {
     fetch('/api/sido').then((r) => r.json()).then((d) => setSidoList(d.sido ?? [])).catch(() => setGlobalError('시/도 목록을 불러오지 못했습니다.'));
@@ -66,7 +60,7 @@ export default function SearchForm() {
   const refreshStatus = useCallback(async () => {
     setLoadingStatus(true);
     try {
-      const [statusRes, baselineRes] = await Promise.all([fetch('/api/debug/status'), fetch('/api/admin/refresh-region/status')]);
+      const [statusRes, baselineRes] = await Promise.all([fetch('/api/debug/status'), fetch('/api/admin/baseline-import/status')]);
       setStatus(await statusRes.json());
       if (baselineRes.ok) setBaseline(await baselineRes.json());
     } catch {
@@ -100,17 +94,10 @@ export default function SearchForm() {
 
   useEffect(() => { if (sido) loadSigungu(sido); }, [loadSigungu, sido]);
 
-  const baselineProgress = useMemo(() => {
-    if (!baseline || baseline.done || baseline.status === 'error') return 100;
-    if (!baseline.totalPages || !baseline.currentPage) return 5;
-    return Math.min(95, Math.round((baseline.currentPage / baseline.totalPages) * 100));
+  const importProgress = useMemo(() => {
+    if (!baseline || baseline.progress.total === 0) return 0;
+    return Math.round((baseline.progress.processed / baseline.progress.total) * 100);
   }, [baseline]);
-
-  const rideProgress = useMemo(() => {
-    const p = baseline?.rideProgress;
-    if (!p || p.totalTargets === 0) return 0;
-    return Math.round((p.processedTargets / p.totalTargets) * 100);
-  }, [baseline?.rideProgress]);
 
   async function onSearch() {
     setLoadingSearch(true);
@@ -133,21 +120,22 @@ export default function SearchForm() {
     }
   }
 
-  async function runBaselineBuild() {
-    await fetch('/api/admin/refresh-region/start', { method: 'POST' });
-    let guard = 0;
-    while (guard < 2000) {
-      const statusRes = await fetch('/api/admin/refresh-region/status');
-      const statusJson = await statusRes.json();
-      setBaseline(statusJson);
-      if (statusJson.done) {
-        if (statusJson.status === 'error') throw new Error(statusJson.baselineLastError ?? 'baseline build failed');
-        break;
-      }
-      await fetch('/api/admin/refresh-region/continue', { method: 'POST' });
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      guard += 1;
-    }
+  async function uploadFile(kind: 'pfc3' | 'exfc5') {
+    const file = kind === 'pfc3' ? pfc3File : exfc5File;
+    if (!file) throw new Error(`${kind} 파일을 먼저 선택하세요.`);
+
+    const formData = new FormData();
+    formData.append('file', file);
+    const endpoint = kind === 'pfc3' ? '/api/admin/baseline-import/upload-pfc3' : '/api/admin/baseline-import/upload-exfc5';
+    const res = await fetch(endpoint, { method: 'POST', body: formData });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.detailMessage ?? json.message ?? `${kind} 업로드 실패`);
+  }
+
+  async function runBaselineImport() {
+    const res = await fetch('/api/admin/baseline-import/start', { method: 'POST' });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.detailMessage ?? json.message ?? '기준선 import 실패');
   }
 
   async function runRideBatch() {
@@ -160,7 +148,6 @@ export default function SearchForm() {
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.detailMessage ?? json.message ?? 'ride batch failed');
-      await refreshStatus();
       if (json.done) break;
       first = false;
       guard += 1;
@@ -168,22 +155,23 @@ export default function SearchForm() {
     }
   }
 
-  async function stopBaselineBuild() {
-    await fetch('/api/admin/refresh-region/stop', { method: 'POST' });
-    await refreshStatus();
-  }
-
-  async function runAdminAction(action: 'baseline' | 'rides') {
+  async function runAdminAction(action: 'upload-pfc3' | 'upload-exfc5' | 'baseline' | 'rides') {
     setRunningAdminAction(action);
     setGlobalError('');
     setGlobalMessage('');
     try {
-      if (action === 'baseline') {
-        await runBaselineBuild();
-        setGlobalMessage('기준선 캐시 빌드가 완료되었습니다.');
+      if (action === 'upload-pfc3') {
+        await uploadFile('pfc3');
+        setGlobalMessage('1) pfc3 파일 업로드 완료');
+      } else if (action === 'upload-exfc5') {
+        await uploadFile('exfc5');
+        setGlobalMessage('2) exfc5 파일 업로드 완료');
+      } else if (action === 'baseline') {
+        await runBaselineImport();
+        setGlobalMessage('3) 기준선 캐시 생성(import) 완료');
       } else {
         await runRideBatch();
-        setGlobalMessage('ride 캐시 배치 갱신을 완료했습니다.');
+        setGlobalMessage('5) ride 캐시 갱신 완료');
       }
       await refreshStatus();
       if (sido) await loadSigungu(sido);
@@ -200,14 +188,38 @@ export default function SearchForm() {
   ] as const, []);
 
   return <div className="space-y-6">
-    <section className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">사용자 검색은 Firestore 시설 캐시만 사용합니다. 전국 API 수집은 운영 패널의 "기준선 캐시 빌드"에서만 수행됩니다.</section>
+    <section className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">사용자 검색은 Firestore facilities 캐시만 사용합니다. baseline이 없으면 먼저 파일데이터를 업로드해 기준선 캐시를 생성하세요.</section>
+
     <section className="rounded-xl bg-white p-4 shadow"><h2 className="mb-2 text-lg font-bold">진단 상태 요약</h2>
-      <div className="grid gap-2 text-sm md:grid-cols-3"><StatusBadge label="Firebase" ok={status?.firebase.ok ?? false} okText="연결됨" failText="오류" /><StatusBadge label="공공데이터 API" ok={status?.publicApi.ok ?? false} okText="응답 가능" failText="오류" /><StatusBadge label="기준선 캐시" ok={status?.baselineMeta?.baselineStatus === 'success'} okText="준비됨" failText="미준비" /></div>
-      <button onClick={refreshStatus} disabled={loadingStatus} className="mt-3 rounded border px-3 py-1 text-sm">{loadingStatus ? '상태 조회 중...' : '상태 새로고침'}</button></section>
+      <div className="grid gap-2 text-sm md:grid-cols-4"><StatusBadge label="Firebase" ok={status?.firebase.ok ?? false} okText="연결됨" failText="오류" /><StatusBadge label="공공데이터 API" ok={status?.publicApi.ok ?? false} okText="응답 가능" failText="오류" /><StatusBadge label="기준선 캐시" ok={status?.baselineMeta?.baselineStatus === 'success'} okText="준비됨" failText="미준비" /><StatusBadge label="기준선 소스" ok={status?.baselineMeta?.baselineSource === 'file-import'} okText="file-import" failText={status?.baselineMeta?.baselineSource ?? 'none'} /></div>
+      <button onClick={refreshStatus} disabled={loadingStatus} className="mt-3 rounded border px-3 py-1 text-sm">{loadingStatus ? '상태 조회 중...' : '4) 상태 새로고침'}</button></section>
+
     <section className="rounded-xl bg-white p-4 shadow"><h2 className="mb-3 text-lg font-bold">운영 패널</h2>
-      {baseline && <div className="grid gap-3 md:grid-cols-2 text-xs"><div className="rounded border bg-slate-50 p-3"><p className="font-semibold">기준선 캐시 빌드</p><div className="mb-2 h-3 w-full overflow-hidden rounded bg-slate-200"><div className={`h-full ${baseline.status === 'error' ? 'bg-red-500' : 'bg-blue-600'}`} style={{ width: `${baselineProgress}%` }} /></div><p>단계: {baseline.currentStage ?? '-'}</p><p>페이지: {baseline.currentPage ?? 0} / {baseline.totalPages ?? '-'}</p><p>raw: {baseline.baselineRawFacilityCount ?? 0} / filtered: {baseline.baselineFilteredFacilityCount ?? 0}</p><p>샘플 지역: {(baseline.baselineSampleMatchedRegions ?? []).slice(0, 4).join(', ') || '-'}</p>{baseline.baselineLastError && <p className="text-red-700">오류: {baseline.baselineLastError}</p>}</div><div className="rounded border bg-slate-50 p-3"><p className="font-semibold">ride 캐시 배치</p><div className="mb-2 h-3 w-full overflow-hidden rounded bg-slate-200"><div className="h-full bg-indigo-600" style={{ width: `${rideProgress}%` }} /></div><p>상태: {baseline.rideStatus ?? 'idle'}</p><p>처리: {baseline.rideProgress?.processedTargets ?? 0} / {baseline.rideProgress?.totalTargets ?? 0}</p><p>업데이트: {baseline.rideProgress?.updatedTargets ?? 0}, 오류: {baseline.rideProgress?.errorTargets ?? 0}</p>{baseline.rideLastError && <p className="text-red-700">오류: {baseline.rideLastError}</p>}</div></div>}
-      <div className="mt-3 flex flex-wrap gap-2"><button onClick={() => runAdminAction('baseline')} disabled={runningAdminAction !== ''} className="rounded bg-slate-800 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-400">{runningAdminAction === 'baseline' ? '기준선 캐시 빌드 중...' : '기준선 캐시 빌드'}</button><button onClick={() => runAdminAction('rides')} disabled={runningAdminAction !== ''} className="rounded bg-indigo-700 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-400">{runningAdminAction === 'rides' ? 'ride 캐시 갱신 중...' : 'ride 캐시 갱신'}</button><button onClick={refreshStatus} disabled={loadingStatus} className="rounded border px-3 py-2 text-sm">상태 새로고침</button><button onClick={stopBaselineBuild} className="rounded border border-red-300 px-3 py-2 text-sm text-red-700">캐시 수집 중지</button></div>
+      <ol className="list-decimal pl-5 text-sm text-slate-700 space-y-1 mb-3"><li>pfc3 파일 업로드</li><li>exfc5 파일 업로드</li><li>기준선 캐시 생성(import)</li><li>상태 새로고침</li><li>ride 캐시 갱신</li></ol>
+      <div className="grid gap-2 md:grid-cols-2">
+        <div className="rounded border p-3">
+          <p className="mb-2 font-semibold text-sm">1) pfc3 파일</p>
+          <input type="file" accept=".json,.csv" onChange={(e) => setPfc3File(e.target.files?.[0] ?? null)} className="text-xs" />
+          <button onClick={() => runAdminAction('upload-pfc3')} disabled={runningAdminAction !== ''} className="mt-2 rounded bg-slate-800 px-3 py-1 text-xs text-white disabled:bg-slate-400">업로드</button>
+        </div>
+        <div className="rounded border p-3">
+          <p className="mb-2 font-semibold text-sm">2) exfc5 파일</p>
+          <input type="file" accept=".json,.csv" onChange={(e) => setExfc5File(e.target.files?.[0] ?? null)} className="text-xs" />
+          <button onClick={() => runAdminAction('upload-exfc5')} disabled={runningAdminAction !== ''} className="mt-2 rounded bg-slate-800 px-3 py-1 text-xs text-white disabled:bg-slate-400">업로드</button>
+        </div>
+      </div>
+      <div className="mt-3 rounded border bg-slate-50 p-3 text-xs">
+        <p>업로드 건수: pfc3 {baseline?.uploadCounts.pfc3 ?? 0} / exfc5 {baseline?.uploadCounts.exfc5 ?? 0}</p>
+        <p>단계: {baseline?.currentStage ?? '-'}</p>
+        <div className="mb-2 h-3 w-full overflow-hidden rounded bg-slate-200"><div className={`h-full ${baseline?.baselineStatus === 'error' ? 'bg-red-500' : 'bg-blue-600'}`} style={{ width: `${importProgress}%` }} /></div>
+        <p>진행률: {importProgress}%</p>
+        <p>처리/총: {baseline?.progress.processed ?? 0} / {baseline?.progress.total ?? 0}</p>
+        <p>성공/실패: {baseline?.progress.success ?? 0} / {baseline?.progress.failure ?? 0}</p>
+        {baseline?.baselineLastError && <p className="text-red-700">오류: {baseline.baselineLastError}</p>}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2"><button onClick={() => runAdminAction('baseline')} disabled={runningAdminAction !== ''} className="rounded bg-blue-700 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-400">{runningAdminAction === 'baseline' ? '기준선 import 중...' : '3) 기준선 캐시 생성(import)'}</button><button onClick={() => runAdminAction('rides')} disabled={runningAdminAction !== '' || status?.baselineMeta?.baselineStatus !== 'success'} className="rounded bg-indigo-700 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-400">5) ride 캐시 갱신</button></div>
     </section>
+
     <section className="rounded-xl bg-white p-4 shadow"><h2 className="mb-4 text-lg font-bold">검색 조건</h2><div className="grid gap-3 md:grid-cols-2"><select className="rounded border p-2" value={sido} onChange={(e) => setSido(e.target.value)}><option value="">시/도 선택</option>{sidoList.map((x) => <option key={x} value={x}>{x}</option>)}</select><select className="rounded border p-2" value={sigungu} onChange={(e) => setSigungu(e.target.value)} disabled={!sido || sigunguList.length === 0}><option value="">시/군/구 선택</option>{sigunguList.map((x) => <option key={x} value={x}>{x}</option>)}</select><input className="rounded border p-2" type="number" placeholder="설치연도(이후)" value={installYearFrom} onChange={(e) => setInstallYearFrom(e.target.value ? Number(e.target.value) : '')} /><input className="rounded border p-2" type="number" min={1} max={50} value={topN} onChange={(e) => setTopN(Number(e.target.value))} /></div>{sigunguMessage && <p className="mt-2 text-xs text-slate-600">{sigunguMessage}</p>}<div className="mt-3"><p className="mb-2 text-sm font-semibold">설치장소</p><div className="flex flex-wrap gap-3">{Object.entries(INSTALL_PLACE_LABELS).map(([code, label]) => (<label key={code} className="flex items-center gap-1 text-sm"><input type="checkbox" checked={installPlaces.includes(code)} onChange={(e) => { setInstallPlaces((prev) => e.target.checked ? [...prev, code] : prev.filter((x) => x !== code)); }} />{label} ({code})</label>))}</div></div><div className="mt-4 grid gap-2 md:grid-cols-3">{weightFields.map(([k, label]) => (<label key={k} className="text-xs">{label}<input className="mt-1 w-full rounded border p-2" type="number" value={weights[k]} onChange={(e) => setWeights((prev) => ({ ...prev, [k]: Number(e.target.value) }))} /></label>))}</div><button onClick={onSearch} disabled={loadingSearch || !sido} className="mt-4 rounded bg-blue-600 px-4 py-2 font-semibold text-white disabled:bg-slate-400">{loadingSearch ? '검색 중...' : '검색 실행'}</button></section>
     {globalMessage && <section className="rounded border border-green-300 bg-green-50 p-3 text-sm text-green-800">{globalMessage}</section>}
     {globalError && <section className="rounded border border-red-300 bg-red-50 p-3 text-sm text-red-700">{globalError}</section>}
