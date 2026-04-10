@@ -2,12 +2,16 @@ import { getFirestoreAdmin } from './firestore';
 import { stripUndefinedDeep } from './normalization';
 import type { CacheMetaDoc, FacilityDoc, RideCacheDoc } from '@/types/domain';
 
+function sanitizeForFirestoreWrite<T>(doc: T): T {
+  return stripUndefinedDeep(doc);
+}
+
 export async function upsertFacilities(facilities: FacilityDoc[]) {
   if (facilities.length === 0) return;
   const db = getFirestoreAdmin();
   const batch = db.batch();
   facilities.forEach((f) => {
-    batch.set(db.collection('facilities').doc(String(f.pfctSn)), stripUndefinedDeep(f), { merge: true });
+    batch.set(db.collection('facilities').doc(String(f.pfctSn)), sanitizeForFirestoreWrite(f), { merge: true });
   });
   await batch.commit();
 }
@@ -36,12 +40,12 @@ export async function getRideCaches(pfctSns: number[]) {
 
 export async function upsertRideCache(doc: RideCacheDoc) {
   const db = getFirestoreAdmin();
-  await db.collection('rideCache').doc(String(doc.pfctSn)).set(stripUndefinedDeep(doc), { merge: true });
+  await db.collection('rideCache').doc(String(doc.pfctSn)).set(sanitizeForFirestoreWrite(doc), { merge: true });
 }
 
 export async function setCacheMeta(regionKey: string, meta: CacheMetaDoc) {
   const db = getFirestoreAdmin();
-  await db.collection('cacheMeta').doc(regionKey).set(stripUndefinedDeep(meta), { merge: true });
+  await db.collection('cacheMeta').doc(regionKey).set(sanitizeForFirestoreWrite(meta), { merge: true });
 }
 
 export async function getCacheMeta(regionKey: string) {

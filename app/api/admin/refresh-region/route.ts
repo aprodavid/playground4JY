@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { dedupeByCoordinate, toFacilityDoc } from '@/lib/normalization';
+import { dedupeByCoordinate, stripUndefinedDeep, toFacilityDoc } from '@/lib/normalization';
 import { fetchExfc5, fetchPfc3, PublicDataError } from '@/lib/public-data';
 import { isMissingEnvError } from '@/lib/env';
 import { setCacheMeta, upsertFacilities } from '@/lib/firestore-repo';
@@ -49,16 +49,16 @@ export async function POST(req: Request) {
 
     const excellentSet = new Set(exfc5.map((x) => Number(x.pfctSn)));
     const normalized = pfc3.map((row) => toFacilityDoc(row, excellentSet.has(Number(row.pfctSn))));
-    const deduped = dedupeByCoordinate(normalized);
+    const deduped = dedupeByCoordinate(normalized).map((facility) => stripUndefinedDeep(facility));
 
     await upsertFacilities(deduped);
-    await setCacheMeta(regionKey, {
+    await setCacheMeta(regionKey, stripUndefinedDeep({
       regionKey,
       lastBuiltAt: new Date().toISOString(),
       facilitiesCount: deduped.length,
       excellentCount: deduped.filter((x) => x.isExcellent).length,
       lastBuildStatus: 'ok',
-    });
+    }));
 
     return NextResponse.json({ regionKey, facilitiesCount: deduped.length, message: `지역 캐시 ${deduped.length}건 빌드 완료` });
   } catch (error) {
@@ -69,14 +69,14 @@ export async function POST(req: Request) {
     const firestoreWriteError = getFirestoreWriteErrorDetail(error);
 
     if (regionKey !== 'unknown') {
-      await setCacheMeta(regionKey, {
+      await setCacheMeta(regionKey, stripUndefinedDeep({
         regionKey,
         lastBuiltAt: new Date().toISOString(),
         facilitiesCount: 0,
         excellentCount: 0,
         lastBuildStatus: 'error',
         lastError: firestoreWriteError?.message ?? (error instanceof Error ? error.message : 'unknown error'),
-      });
+      }));
     }
     if (isMissingEnvError(error)) {
       return NextResponse.json({ message: error.message }, { status: 500 });
