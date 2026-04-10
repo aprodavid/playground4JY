@@ -94,13 +94,9 @@ export async function rebuildSigunguIndexFromFacilities() {
 export async function getSigunguBySido(sido: string) {
   const db = getFirestoreAdmin();
   const doc = await db.collection('sigunguIndex').doc(sido).get();
-  if (doc.exists) {
-    const list = (doc.get('sigungu') as string[] | undefined) ?? [];
-    if (list.length > 0) return [...new Set(list)].sort();
-  }
-
-  const snap = await db.collection('facilities').where('sido', '==', sido).select('sigungu').get();
-  return [...new Set(snap.docs.map((d) => String(d.get('sigungu') ?? '')).filter(Boolean))].sort();
+  if (!doc.exists) return [];
+  const list = (doc.get('sigungu') as string[] | undefined) ?? [];
+  return [...new Set(list)].sort();
 }
 
 export async function getCollectionCounts() {

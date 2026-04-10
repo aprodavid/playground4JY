@@ -7,7 +7,7 @@ export const runtime = 'nodejs';
 export async function GET() {
   const envStatus = {
     PUBLIC_DATA_BASE_URL: Boolean(process.env.PUBLIC_DATA_BASE_URL),
-    PUBLIC_DATA_SERVICE_KEY: Boolean(process.env.PUBLIC_DATA_SERVICE_KEY),
+    PUBLIC_DATA_SERVICE_KEY: false,
     FIREBASE_PROJECT_ID: Boolean(process.env.FIREBASE_PROJECT_ID),
     FIREBASE_CLIENT_EMAIL: Boolean(process.env.FIREBASE_CLIENT_EMAIL),
     FIREBASE_PRIVATE_KEY: Boolean(process.env.FIREBASE_PRIVATE_KEY),
@@ -15,6 +15,10 @@ export async function GET() {
 
   const result = {
     env: envStatus,
+    functionsSecretMode: {
+      PUBLIC_DATA_SERVICE_KEY: true,
+      message: 'PUBLIC_DATA_SERVICE_KEY is managed by Firebase Functions Secret Manager.',
+    },
     firebase: { ok: false as boolean, error: null as string | null },
     counts: { facilities: 0, rideCache: 0, cacheMeta: 0, sigunguIndex: 0, jobs: 0 },
     latestCacheBuild: null as Awaited<ReturnType<typeof getLatestCacheMeta>>,
@@ -48,6 +52,7 @@ export async function GET() {
     result.firebase.error = error instanceof Error ? error.message : 'unknown error';
   }
 
-  const statusCode = Object.values(envStatus).every(Boolean) && result.firebase.ok ? 200 : 500;
+  const vercelEnvOk = envStatus.PUBLIC_DATA_BASE_URL && envStatus.FIREBASE_PROJECT_ID && envStatus.FIREBASE_CLIENT_EMAIL && envStatus.FIREBASE_PRIVATE_KEY;
+  const statusCode = vercelEnvOk && result.firebase.ok ? 200 : 500;
   return NextResponse.json(result, { status: statusCode });
 }

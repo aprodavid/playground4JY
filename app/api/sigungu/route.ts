@@ -12,24 +12,29 @@ export async function GET(req: NextRequest) {
     if (!baselineMeta || baselineMeta.baselineStatus !== 'success') {
       return NextResponse.json({
         sigungu: [],
-        source: 'none',
+        source: 'sigungu-index',
         emptyReason: baselineMeta?.baselineStatus === 'running' ? 'baseline-running' : 'baseline-not-ready',
-        message: '시군구 목록은 기준선 캐시 생성 후에 사용할 수 있습니다.',
+        message: '시군구 목록은 baseline 완료 후 sigunguIndex에서만 조회됩니다.',
       }, { status: 409 });
     }
 
-    const fromCache = await getSigunguBySido(sido);
-    if (fromCache.length === 0) {
+    const fromIndex = await getSigunguBySido(sido);
+    if (fromIndex.length === 0) {
       return NextResponse.json({
         sigungu: [],
         source: 'sigungu-index',
         emptyReason: 'sido-match-zero',
-        message: '기준선 캐시에는 해당 시/도의 시군구 데이터가 없습니다.',
+        message: 'sigunguIndex에 해당 시/도 데이터가 없습니다.',
       });
     }
 
-    return NextResponse.json({ sigungu: fromCache, source: 'sigungu-index' });
+    return NextResponse.json({ sigungu: fromIndex, source: 'sigungu-index' });
   } catch (error) {
-    return NextResponse.json({ message: 'sigungu lookup failed', sigungu: [], errorType: 'unknown', detailMessage: error instanceof Error ? error.message : 'unknown error' }, { status: 500 });
+    return NextResponse.json({
+      message: 'sigungu lookup failed',
+      sigungu: [],
+      errorType: 'unknown',
+      detailMessage: error instanceof Error ? error.message : 'unknown error',
+    }, { status: 500 });
   }
 }
