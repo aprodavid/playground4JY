@@ -232,6 +232,8 @@ async function fetchAllPages(
       ...baseParams,
       pageIndex,
       recordCountPerPage: pageSize,
+      pageNo: pageIndex,
+      numOfRows: pageSize,
     };
 
     const page = await fetchDataWithMeta(endpointPath, params);
@@ -300,8 +302,12 @@ export async function fetchRide4(pfctSn: number) {
   return result.items;
 }
 
+export async function fetchExfc5WithMeta(params: Record<string, string | number>) {
+  return fetchDataWithMeta('/exfc5/getExfc5', params);
+}
+
 export async function fetchExfc5(params: Record<string, string | number>) {
-  const result = await fetchDataWithMeta('/exfc5/getExfc5', params);
+  const result = await fetchExfc5WithMeta(params);
   return result.items;
 }
 
