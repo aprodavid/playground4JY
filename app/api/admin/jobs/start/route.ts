@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { createJob, getLatestJob } from '@/lib/firestore-repo';
+import { BASELINE_META_KEY, createJob, getLatestJob, setCacheMeta } from '@/lib/firestore-repo';
 import { jsonError, jsonOk, parseJsonBody } from '@/lib/admin-json';
 
 const schema = z.object({
@@ -22,7 +22,30 @@ export async function POST(req: Request) {
     }
 
     const job = await createJob(type);
-    return jsonOk({ message: `${type} job queued`, job }, 201);
+    const now = new Date().toISOString();
+    if (type === 'baseline') {
+      await setCacheMeta(BASELINE_META_KEY, {
+        regionKey: BASELINE_META_KEY,
+        status: 'running',
+        baselineStatus: 'running',
+        baselineCurrentStage: 'queued',
+        baselineStartedAt: job.startedAt ?? now,
+        baselineUpdatedAt: now,
+        done: false,
+      });
+    } else {
+      await setCacheMeta(BASELINE_META_KEY, {
+        regionKey: BASELINE_META_KEY,
+        rideStatus: 'running',
+        rideStartedAt: job.startedAt ?? now,
+        rideUpdatedAt: now,
+      });
+    }
+
+    return jsonOk({
+      message: `${type} job queued. Firebase Functions will process it in background.`,
+      job,
+    }, 201);
   } catch (error) {
     return jsonError('start job failed', { status: 500, detailMessage: error instanceof Error ? error.message : 'unknown error' });
   }

@@ -1,76 +1,103 @@
-# 어린이 놀이시설 추천 웹앱 v3 (Vercel + Firebase Functions Worker)
+# 어린이 놀이시설 추천 웹앱 v3 (Next.js + Firebase Functions 2nd gen)
 
-## 아키텍처 요약
-- **Vercel(Next.js 15.3.8)**: UI, 검색, 작업(Job) 생성/조회/중지 API만 담당
-- **Firebase Functions 2nd gen**: baseline/ride 캐시를 백그라운드 배치로 생성
-- **Firestore**: `jobs`, `cacheMeta`, `facilities`, `rideCache`, `sigunguIndex` 저장소
-- 사용자 요청 당 공공데이터 API 직접 호출 없음(검색은 Firestore 캐시 조회만 수행)
+## 역할 분리 (핵심)
+- **Vercel (Next.js 15.3.8)**
+  - UI 렌더링
+  - 검색 API(`/api/search`) 제공 (Firestore 캐시 읽기 전용)
+  - 운영 패널에서 baseline/ride 작업 시작/중지/상태 polling
+- **Firebase Functions 2nd gen**
+  - baseline facilities 캐시 생성
+  - ride 캐시 부분 갱신
+  - Firestore `jobs` 상태머신을 따라 백그라운드 처리
+  - 스케줄러 + Firestore 트리거로 작업 이어서 처리
+- **Firestore**
+  - `facilities`, `rideCache`, `sigunguIndex`, `cacheMeta`, `jobs`
 
-## 왜 구조를 바꿨나?
-기존 구조는 Vercel Route Handler가 전국 페이지 순회를 직접 수행해서 **요청-응답이 장시간 점유**되고 타임아웃/지연이 발생했습니다. 이제 무거운 작업은 Functions 워커가 처리하고 Vercel은 상태 조회만 합니다.
+---
 
-## 컬렉션 구조
-- `jobs/{jobId}`
-  - `type`: `baseline | ride`
-  - `status`: `queued | running | success | error | stopped`
-  - `currentStage`, `currentInstallPlace`, `currentPage`, `totalPages`, `pagesFetched`
-  - `rawFacilityCount`, `filteredFacilityCount`, `successCount`, `errorCount`
-  - `startedAt`, `updatedAt`, `lastError`, `resultSummary`, `cursor`, `stopRequested`
-- `cacheMeta/baseline:global`
-  - baseline/ride의 통합 캐시 메타 상태
-- `facilities/{pfctSn}`
-  - `pfctSn`, 시설명, 설치장소코드, 주소, 시도/시군구, 설치연도, 면적, 좌표, 우수시설 여부
-- `rideCache/{pfctSn}`
-  - ride 집계 캐시
-- `sigunguIndex/{sido}`
-  - 시/도별 시/군/구 목록
+## Firestore 컬렉션
+- `facilities/{pfctSn}`: 시설 기준선 캐시
+- `rideCache/{pfctSn}`: ride API 집계 캐시
+- `sigunguIndex/{sido}`: 시/도별 시군구 인덱스
+- `cacheMeta/baseline:global`: baseline/ride 통합 메타 상태
+- `jobs/{jobId}`: 배경 작업 상태머신 (`queued/running/success/error/stopped`)
 
-## Vercel 환경변수 (이름 고정)
+---
+
+## 동작 흐름
+1. 운영 패널에서 baseline 시작 (`POST /api/admin/jobs/start`, `{ type: "baseline" }`)
+2. Vercel은 Firestore `jobs` 문서 생성만 수행 (장시간 작업 없음)
+3. Functions 트리거(`onJobCreatedKick`) 또는 스케줄러(`workerTick`)가 baseline 단계 처리
+4. baseline 완료 시:
+   - `facilities` 갱신
+   - `sigunguIndex` 생성/갱신
+   - `cacheMeta` 상태 success 반영
+5. 운영 패널에서 ride 시작 (`{ type: "ride" }`)
+6. Functions가 `rideCache`를 배치 단위로 부분 갱신
+7. 검색 API는 오직 Firestore 캐시만 읽음
+
+---
+
+## Vercel 환경변수 (이름 변경 금지)
 - `PUBLIC_DATA_BASE_URL`
 - `PUBLIC_DATA_SERVICE_KEY`
 - `FIREBASE_PROJECT_ID`
 - `FIREBASE_CLIENT_EMAIL`
 - `FIREBASE_PRIVATE_KEY`
 
-## 로컬 실행
+> 참고: `PUBLIC_DATA_SERVICE_KEY`는 Vercel에 남겨둘 수 있지만, 실제 baseline/ride 실행은 Functions Secret을 사용합니다.
+
+---
+
+## Firebase Functions Secret/Param 설정
+루트에서 실행:
+
 ```bash
-npm install
-cp .env.example .env.local
-npm run dev
+firebase use aprodavid-playground4jy
+firebase functions:secrets:set PUBLIC_DATA_SERVICE_KEY
 ```
 
-## 운영 플로우 (온라인 전용)
-1. 운영 패널에서 **기준선 캐시 빌드 시작** 클릭 (`/api/admin/jobs/start`, type=baseline)
-2. 프론트가 `/api/admin/jobs/status` + `/api/debug/status`를 polling
-3. Firebase Functions 스케줄러가 queued/running baseline job을 이어서 처리
-4. 완료 시 `facilities`, `sigunguIndex`, `cacheMeta` 업데이트
-5. 운영 패널에서 **ride 캐시 갱신 시작** 클릭 (type=ride)
-6. Functions가 대표 좌표 dedupe 대상에 대해 ride cache를 부분 배치 갱신
+`PUBLIC_DATA_BASE_URL`은 Functions param(defineString)로 사용됩니다. 최초 배포 시 CLI 프롬프트에서 입력하거나 사전 설정하세요.
 
-## Firebase/GCP 수동 설정 순서
-1. Firebase 프로젝트 생성 및 Blaze 요금제 활성화
-2. Firestore Native 모드 생성
-3. Functions 배포 준비
-   - `cd functions && npm install && npm run build`
-4. Secret 등록
-   - `firebase functions:secrets:set PUBLIC_DATA_SERVICE_KEY`
-5. Parameter 등록
-   - `firebase functions:config:set` 대신 **2nd gen param 값** 설정(`PUBLIC_DATA_BASE_URL`)
-   - 또는 배포 시 콘솔에서 param 값 입력
-6. 배포
-   - `firebase deploy --only functions`
-7. Cloud Scheduler 확인
-   - `workerTick`(2분 간격) 트리거 활성화 확인
-8. Vercel 환경변수 입력(이름 변경 금지)
+---
 
-## Vercel API
-- `POST /api/admin/jobs/start` (`baseline|ride`)
-- `GET /api/admin/jobs/status`
-- `POST /api/admin/jobs/stop`
-- `POST /api/search` (Firestore 캐시만 조회)
-- `GET /api/sigungu?sido=...` (`sigunguIndex`만 조회)
-- `GET /api/debug/status`, `GET /api/health`
+## 배포 방법
+### 1) Next.js (Vercel)
+```bash
+npm install
+npm run lint
+npm run build
+```
 
-## 참고
-- `FIREBASE_PRIVATE_KEY`의 `\n`은 서버에서 실제 개행으로 복원됩니다.
-- 수동 파일 업로드 경로는 비활성화(410)되어 있습니다.
+### 2) Functions
+```bash
+cd functions
+npm install
+npm run lint
+npm run build
+firebase deploy --only functions
+```
+
+---
+
+## 주요 API
+- `POST /api/admin/jobs/start` (baseline/ride 작업 생성)
+- `POST /api/admin/jobs/stop` (작업 중지 요청)
+- `GET /api/admin/jobs/status` (작업 상태 조회)
+- `POST /api/search` (Firestore `facilities` + `rideCache` 검색)
+- `GET /api/sigungu?sido=...` (Firestore `sigunguIndex`만 사용)
+- `GET /api/debug/status`
+- `GET /api/health`
+
+---
+
+## Functions 엔드포인트/트리거
+- `workerTick` (Scheduler, 2분): queued/running job 진행
+- `workerKick` (HTTP): 강제 1 step 실행(운영 점검용)
+- `onJobCreatedKick` (Firestore trigger): `jobs/{jobId}` 생성 시 즉시 1 step 실행
+
+---
+
+## 주의
+- 수동 파일 업로드 경로는 비활성화(410) 상태입니다.
+- `FIREBASE_PRIVATE_KEY`의 `\n` 복원 로직은 유지됩니다.

@@ -160,7 +160,7 @@ export default function SearchForm() {
   ] as const;
 
   return <div className="space-y-6">
-    <section className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">사용자 검색은 Firestore facilities/rideCache 캐시만 사용합니다. 기준선 캐시가 없으면 먼저 빌드 버튼을 눌러주세요.</section>
+    <section className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">사용자 검색은 Firestore facilities/rideCache 캐시만 사용합니다. baseline/ride 생성은 Firebase Functions 백그라운드 작업으로 처리됩니다.</section>
 
     <section className="rounded-xl bg-white p-4 shadow"><h2 className="mb-3 text-lg font-bold">운영 패널</h2>
       <div className="flex flex-wrap gap-2"><button onClick={() => runAdminAction('baseline')} disabled={runningAdminAction !== ''} className="rounded bg-blue-700 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-400">기준선 캐시 빌드 시작</button><button onClick={() => runAdminAction('ride')} disabled={runningAdminAction !== '' || status?.baselineMeta?.baselineStatus !== 'success'} className="rounded bg-indigo-700 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-400">ride 캐시 갱신 시작</button><button onClick={refreshStatus} disabled={loadingStatus} className="rounded border px-3 py-2 text-sm">상태 새로고침</button><button onClick={() => runAdminAction('stop')} disabled={runningAdminAction !== '' || !activeJob?.jobId} className="rounded bg-rose-700 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-400">작업 중지</button></div>
