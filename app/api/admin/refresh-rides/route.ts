@@ -67,6 +67,6 @@ export async function POST(req: Request) {
         detailMessage: error.message,
       }, { status: 502 });
     }
-    return NextResponse.json({ message: 'refresh-rides failed' }, { status: 500 });
+    return NextResponse.json({ message: 'refresh-rides failed', errorType: 'unknown', detailMessage: error instanceof Error ? error.message : 'unknown error' }, { status: 500 });
   }
 }

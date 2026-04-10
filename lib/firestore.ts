@@ -1,6 +1,8 @@
 import { cert, getApps, initializeApp } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import { initializeFirestore, type Firestore } from 'firebase-admin/firestore';
 import { getFirebaseAdminEnv } from './env';
+
+let firestoreInstance: Firestore | null = null;
 
 function init() {
   if (getApps().length > 0) {
@@ -17,5 +19,12 @@ function init() {
 }
 
 export function getFirestoreAdmin() {
-  return getFirestore(init());
+  if (firestoreInstance) {
+    return firestoreInstance;
+  }
+  const app = init();
+  firestoreInstance = initializeFirestore(app, {
+    ignoreUndefinedProperties: true,
+  });
+  return firestoreInstance;
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DEFAULT_WEIGHTS, INSTALL_PLACE_LABELS, type CacheMetaDoc, type SearchResult, type WeightConfig } from '@/types/domain';
 
 type SearchResponse = {
@@ -73,30 +73,33 @@ export default function SearchForm() {
     refreshStatus();
   }, []);
 
-  useEffect(() => {
-    if (!sido) return;
+
+  const loadSigungu = useCallback(async (nextSido: string) => {
+    if (!nextSido) return;
     setSigunguList([]);
     setSigungu('');
     setSigunguMessage('시/군/구 목록을 불러오는 중입니다.');
 
-    fetch(`/api/sigungu?sido=${encodeURIComponent(sido)}`)
-      .then(async (r) => {
-        const json = await r.json();
-        if (!r.ok) {
-          const detail = [json.errorType, json.status ? `HTTP ${json.status}` : null, json.endpoint].filter(Boolean).join(' / ');
-          throw new Error(detail ? `${json.message ?? 'sigungu load failed'} (${detail})` : (json.message ?? 'sigungu load failed'));
-        }
-        return json;
-      })
-      .then((d) => {
-        setSigunguList(d.sigungu ?? []);
-        const detail = d.errorType ? ` [${d.errorType}${d.status ? ` / HTTP ${d.status}` : ''}]` : '';
-        setSigunguMessage(d.message ? `${d.message}${detail}` : ((d.sigungu?.length ?? 0) > 0 ? '' : '해당 시/도의 시/군/구 데이터가 없습니다.'));
-      })
-      .catch((e) => {
-        setSigunguMessage(e instanceof Error ? e.message : '시/군/구를 불러오지 못했습니다.');
-      });
-  }, [sido]);
+    try {
+      const res = await fetch(`/api/sigungu?sido=${encodeURIComponent(nextSido)}`);
+      const json = await res.json();
+      if (!res.ok) {
+        const detail = [json.errorType, json.status ? `HTTP ${json.status}` : null, json.endpoint, json.detailMessage].filter(Boolean).join(' / ');
+        throw new Error(detail ? `${json.message ?? 'sigungu load failed'} (${detail})` : (json.message ?? 'sigungu load failed'));
+      }
+
+      setSigunguList(json.sigungu ?? []);
+      const detail = json.errorType ? ` [${json.errorType}${json.status ? ` / HTTP ${json.status}` : ''}]` : '';
+      setSigunguMessage(json.message ? `${json.message}${detail}` : ((json.sigungu?.length ?? 0) > 0 ? '' : '해당 시/도의 시/군/구 데이터가 없습니다.'));
+    } catch (e) {
+      setSigunguMessage(e instanceof Error ? e.message : '시/군/구를 불러오지 못했습니다.');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!sido) return;
+    loadSigungu(sido);
+  }, [loadSigungu, sido]);
 
   const weightFields = useMemo(() => [
     ['recent3yBonus', '최근 3년 가산'],
@@ -156,11 +159,14 @@ export default function SearchForm() {
       });
       const json = await res.json();
       if (!res.ok) {
-        const detailParts = [json.errorType, json.status ? `HTTP ${json.status}` : null, json.endpoint, json.detailMessage].filter(Boolean);
+        const detailParts = [json.errorType, json.status ? `HTTP ${json.status}` : null, json.endpoint, json.failingField ? `field:${json.failingField}` : null, json.detailMessage].filter(Boolean);
         throw new Error(detailParts.length > 0 ? detailParts.join(' / ') : (json.message ?? '관리자 액션 실패'));
       }
       setGlobalMessage(json.message ?? `${action === 'region' ? '지역 캐시 빌드' : 'ride 캐시 갱신'} 완료`);
       await refreshStatus();
+      if (action === 'region') {
+        await loadSigungu(sido);
+      }
     } catch (error) {
       setGlobalError(error instanceof Error ? error.message : '관리자 액션 실패');
     } finally {
@@ -202,6 +208,7 @@ export default function SearchForm() {
           <p>rideCache 문서 수: <b>{status?.counts.rideCache ?? 0}</b></p>
           <p>마지막 빌드 시각: <b>{status?.latestCacheBuild?.lastBuiltAt ?? '-'}</b></p>
           <p>마지막 빌드 상태: <b>{status?.latestCacheBuild?.lastBuildStatus ?? '-'}</b></p>
+          <p>마지막 빌드 오류: <b>{status?.latestCacheBuild?.lastError ?? '-'}</b></p>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           <button onClick={() => runAdminAction('region')} disabled={runningAdminAction !== ''} className="rounded bg-slate-800 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-400">
