@@ -40,13 +40,56 @@ export function stripUndefinedDeep<T>(value: T): T {
   return value;
 }
 
+const SIDO_SUFFIXES = ['특별시', '광역시', '특별자치시', '특별자치도', '자치도', '도', '시'];
+
+function firstAddressToken(address: string): string | undefined {
+  const first = parseText(address)?.split(' ')[0];
+  return parseText(first);
+}
+
+function looksLikeSido(text?: string): boolean {
+  if (!text) return false;
+  return SIDO_SUFFIXES.some((suffix) => text.endsWith(suffix));
+}
+
+export function extractRegionFromRaw(raw: Record<string, unknown>) {
+  const address = parseText(raw.rdnmadr) ?? parseText(raw.lnmadr) ?? parseText(raw.addr) ?? '';
+
+  const sido =
+    parseText(raw.ctprvnNm) ??
+    parseText(raw.rgnNm) ??
+    parseText(raw.region) ??
+    (looksLikeSido(firstAddressToken(address)) ? firstAddressToken(address) : undefined) ??
+    '';
+
+  const sigungu =
+    parseText(raw.signguNm) ??
+    parseText(raw.sigunguNm) ??
+    parseText(raw.sggNm) ??
+    parseText(raw.district) ??
+    parseText(raw.county) ??
+    parseText(address.split(' ').slice(1, 2)[0]) ??
+    '';
+
+  return {
+    sido,
+    sigungu,
+    address,
+  };
+}
+
+export function matchesSelectedRegion(raw: Record<string, unknown>, sido: string, sigungu?: string): boolean {
+  const region = extractRegionFromRaw(raw);
+  if (region.sido !== sido) return false;
+  if (sigungu && region.sigungu !== sigungu) return false;
+  return true;
+}
+
 export function toFacilityDoc(raw: Record<string, unknown>, isExcellent: boolean): FacilityDoc {
   const areaValue = parseNumber(raw.ar as string | number | undefined);
   const areaMissing = areaValue === undefined;
 
-  const address = parseText(raw.rdnmadr) ?? parseText(raw.lnmadr) ?? '';
-  const sido = parseText(raw.ctprvnNm) ?? parseText(raw.region) ?? '';
-  const sigungu = parseText(raw.signguNm) ?? parseText(raw.district) ?? '';
+  const region = extractRegionFromRaw(raw);
   const installYear = parseNumber(raw.instlYy);
   const lat = parseNumber(raw.latitude);
   const lng = parseNumber(raw.longitude);
@@ -54,10 +97,10 @@ export function toFacilityDoc(raw: Record<string, unknown>, isExcellent: boolean
   return stripUndefinedDeep({
     pfctSn: Number(raw.pfctSn),
     facilityName: parseText(raw.pfctNm) ?? '이름없음',
-    sido,
-    sigungu,
-    address,
-    normalizedAddress: normalizeAddress(address),
+    sido: region.sido,
+    sigungu: region.sigungu,
+    address: region.address,
+    normalizedAddress: normalizeAddress(region.address),
     lat,
     lng,
     installPlaceCode: String(raw.inslPlcSeCd ?? 'A003') as InstallPlaceCode,

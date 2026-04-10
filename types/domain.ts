@@ -112,6 +112,11 @@ export type CacheMetaDoc = {
   lastBuiltAt: string;
   facilitiesCount: number;
   excellentCount: number;
+  pagesFetched?: number;
+  rawFacilityCount?: number;
+  filteredFacilityCount?: number;
+  selectedRegion?: { sido: string; sigungu?: string };
+  buildDurationMs?: number;
   lastBuildStatus: 'ok' | 'error';
   lastError?: string;
 };
