@@ -29,6 +29,7 @@ npm run dev
 5. Vercel/로컬 npm 해석 일치를 위해 `package.json`의 `packageManager: npm@10.9.2`를 유지
 
 ### 배포 안정성 메모 (중요)
+- Next.js는 Vercel 취약점 차단 정책을 피하기 위해 `15.3.8+` 안정 버전을 사용해야 합니다.
 - Firebase/Public Data 환경변수 검사는 **빌드 시점이 아닌 API Route 실행 시점**에 수행됩니다.
 - 환경변수가 누락되어도 빌드 자체는 실패하지 않으며, 실제 API 호출 시 JSON 에러를 반환합니다.
 - Firebase 관련 Route Handler는 모두 `runtime = 'nodejs'`로 동작합니다.
