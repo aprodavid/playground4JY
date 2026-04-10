@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
         sigungu: [],
         source: 'none',
         emptyReason: baselineMeta?.baselineStatus === 'running' ? 'baseline-running' : 'baseline-not-ready',
-        message: '시군구 목록은 파일데이터 import 기준선 생성 후에 사용할 수 있습니다.',
+        message: '시군구 목록은 기준선 캐시 생성 후에 사용할 수 있습니다.',
       }, { status: 409 });
     }
 

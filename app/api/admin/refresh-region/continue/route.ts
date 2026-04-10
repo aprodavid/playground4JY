@@ -4,7 +4,7 @@ export const runtime = 'nodejs';
 
 export async function POST() {
   return jsonOk({
-    message: '기준선 생성은 파일 import 일괄 처리로 전환되어 continue 단계가 필요 없습니다.',
+    message: '기준선 작업은 Firebase Functions 스케줄러가 자동으로 이어서 처리합니다.',
     done: true,
   });
 }
