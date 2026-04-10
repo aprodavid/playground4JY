@@ -110,13 +110,23 @@ export type SearchResult = {
 export type CacheMetaDoc = {
   regionKey: string;
   lastBuiltAt: string;
+  startedAt?: string;
+  updatedAt?: string;
   facilitiesCount: number;
   excellentCount: number;
   pagesFetched?: number;
   rawFacilityCount?: number;
   filteredFacilityCount?: number;
+  successCount?: number;
+  errorCount?: number;
+  currentStage?: string;
+  currentInstallPlace?: string | null;
+  currentPage?: number;
+  totalPages?: number | null;
   selectedRegion?: { sido: string; sigungu?: string };
   buildDurationMs?: number;
   lastBuildStatus: 'ok' | 'error';
-  lastError?: string;
+  status?: 'idle' | 'running' | 'success' | 'error';
+  done?: boolean;
+  lastError?: string | null;
 };
