@@ -2,6 +2,6 @@ import { POST as startRefreshRegion } from '@/app/api/admin/refresh-region/start
 
 export const runtime = 'nodejs';
 
-export async function POST(req: Request) {
-  return startRefreshRegion(req);
+export async function POST() {
+  return startRefreshRegion();
 }

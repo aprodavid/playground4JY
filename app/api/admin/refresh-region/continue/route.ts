@@ -1,43 +1,34 @@
-import { z } from 'zod';
 import { isMissingEnvError } from '@/lib/env';
-import { jsonError, jsonOk, parseJsonBody } from '@/lib/admin-json';
-import { buildRegionKey, continueRefreshRegionJob, getRefreshRegionJob, mapJobError } from '@/lib/refresh-region-job';
-
-const schema = z.object({ sido: z.string().min(1), sigungu: z.string().optional() });
+import { jsonError, jsonOk } from '@/lib/admin-json';
+import { continueRefreshRegionJob, getRefreshRegionJob, mapJobError } from '@/lib/refresh-region-job';
 
 export const runtime = 'nodejs';
 
-export async function POST(req: Request) {
+export async function POST() {
   try {
-    const parsed = schema.safeParse(await parseJsonBody(req));
-    if (!parsed.success) {
-      return jsonOk({ message: 'invalid payload', errorType: 'validation', errors: parsed.error.flatten() }, 400);
-    }
-
-    const regionKey = buildRegionKey(parsed.data.sido, parsed.data.sigungu);
-    const current = await getRefreshRegionJob(regionKey);
+    const current = await getRefreshRegionJob();
     if (!current) {
-      return jsonError('refresh-region job not found', { status: 404, errorType: 'not-found', extra: { regionKey } });
+      return jsonError('baseline facilities build not found', { status: 404, errorType: 'not-found' });
     }
 
     const next = await continueRefreshRegionJob(current);
     return jsonOk({
-      message: next.done ? 'refresh-region job completed' : 'refresh-region job continued',
-      regionKey,
+      message: next.done ? 'baseline facilities build completed' : 'baseline facilities build continued',
+      regionKey: next.regionKey,
       jobId: next.jobId,
       status: next.status,
       currentStage: next.currentStage,
       currentInstallPlace: next.currentInstallPlace,
       currentPage: next.currentPage,
       totalPages: next.totalPages ?? null,
-      pagesFetched: next.pagesFetched,
-      rawFacilityCount: next.rawFacilityCount,
-      filteredFacilityCount: next.filteredFacilityCount,
-      successCount: next.successCount,
-      errorCount: next.errorCount,
+      baselineStatus: next.baselineStatus,
+      baselinePagesFetched: next.baselinePagesFetched,
+      baselineRawFacilityCount: next.baselineRawFacilityCount,
+      baselineFilteredFacilityCount: next.baselineFilteredFacilityCount,
+      baselineLastError: next.baselineLastError ?? null,
+      baselineSampleMatchedRegions: next.baselineSampleMatchedRegions ?? [],
+      baselineUnmatchedReasonCount: next.baselineUnmatchedReasonCount ?? {},
       done: next.done,
-      lastError: next.lastError ?? null,
-      selectedRegion: next.selectedRegion,
       startedAt: next.startedAt,
       updatedAt: next.updatedAt,
       buildDurationMs: next.buildDurationMs ?? null,

@@ -1,76 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { fetchPfc3AcrossInstallPlaces, PublicDataError } from '@/lib/public-data';
-import { isMissingEnvError } from '@/lib/env';
-import { extractRegionFromRaw } from '@/lib/normalization';
-import { buildRegionKey } from '@/lib/refresh-region-job';
-import { getCacheMeta, getSigunguBySido } from '@/lib/firestore-repo';
+import { BASELINE_META_KEY, getCacheMeta, getSigunguBySido } from '@/lib/firestore-repo';
 
 export const runtime = 'nodejs';
-
-function mapSigunguError(error: PublicDataError) {
-  return {
-    errorType: error.detail.type,
-    status: error.detail.status ?? null,
-    endpoint: error.detail.endpoint,
-    attempts: error.detail.attempts ?? [],
-    message: error.message,
-  };
-}
 
 export async function GET(req: NextRequest) {
   const sido = req.nextUrl.searchParams.get('sido');
   if (!sido) return NextResponse.json({ message: 'sido is required' }, { status: 400 });
 
   try {
-    const fromCache = await getSigunguBySido(sido);
-
-    const regionKey = buildRegionKey(sido);
-    const cacheMeta = await getCacheMeta(regionKey);
-
-    if (fromCache.length > 0) {
-      return NextResponse.json({ sigungu: fromCache, source: 'firestore' });
-    }
-
-    const pfc3 = await fetchPfc3AcrossInstallPlaces({ pageSize: 500 });
-    const matchedSido = pfc3.items.filter((row) => extractRegionFromRaw(row).sido === sido);
-    const sigungu = [...new Set(matchedSido.map((row) => extractRegionFromRaw(row).sigungu).filter(Boolean))].sort();
-
-    if (sigungu.length === 0) {
-      const reason = matchedSido.length === 0
-        ? `pfc3 전체 ${pfc3.items.length}건에서 ${sido}로 매칭된 데이터가 없습니다.`
-        : `${sido} 데이터 ${matchedSido.length}건은 존재하지만 시/군/구 필드(signguNm/sigunguNm/sggNm/address)가 비어 있습니다.`;
-
-      const emptyReason = cacheMeta?.status === 'running'
-        ? 'build-running'
-        : cacheMeta?.facilitiesCount === 0
-          ? 'cache-empty'
-          : matchedSido.length === 0
-            ? 'sido-match-zero'
-            : 'sigungu-field-missing';
-
+    const baselineMeta = await getCacheMeta(BASELINE_META_KEY);
+    if (!baselineMeta || baselineMeta.baselineStatus !== 'success') {
       return NextResponse.json({
         sigungu: [],
-        source: 'public-api',
-        errorType: 'empty-result',
-        emptyReason,
-        message: `선택한 시/도의 시군구 데이터를 찾지 못했습니다. [empty-result] ${reason}`,
-        diagnostics: {
-          pagesFetched: pfc3.pagesFetched,
-          rawFacilityCount: pfc3.items.length,
-          matchedSidoCount: matchedSido.length,
-          cacheStatus: cacheMeta?.status ?? 'idle',
-          cacheFacilitiesCount: cacheMeta?.facilitiesCount ?? 0,
-        },
+        source: 'none',
+        emptyReason: baselineMeta?.baselineStatus === 'running' ? 'baseline-running' : 'baseline-not-ready',
+        message: '시군구 목록은 기준선 캐시 빌드 후에 사용할 수 있습니다.',
+      }, { status: 409 });
+    }
+
+    const fromCache = await getSigunguBySido(sido);
+    if (fromCache.length === 0) {
+      return NextResponse.json({
+        sigungu: [],
+        source: 'sigungu-index',
+        emptyReason: 'sido-match-zero',
+        message: '기준선 캐시에는 해당 시/도의 시군구 데이터가 없습니다.',
       });
     }
-    return NextResponse.json({ sigungu, source: 'public-api', diagnostics: { pagesFetched: pfc3.pagesFetched, rawFacilityCount: pfc3.items.length } });
+
+    return NextResponse.json({ sigungu: fromCache, source: 'sigungu-index' });
   } catch (error) {
-    if (isMissingEnvError(error)) {
-      return NextResponse.json({ message: error.message, sigungu: [] }, { status: 500 });
-    }
-    if (error instanceof PublicDataError) {
-      return NextResponse.json({ sigungu: [], ...mapSigunguError(error) }, { status: 502 });
-    }
-    return NextResponse.json({ message: 'sigungu lookup failed', sigungu: [], errorType: 'unknown' }, { status: 500 });
+    return NextResponse.json({ message: 'sigungu lookup failed', sigungu: [], errorType: 'unknown', detailMessage: error instanceof Error ? error.message : 'unknown error' }, { status: 500 });
   }
 }

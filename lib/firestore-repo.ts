@@ -6,6 +6,8 @@ function sanitizeForFirestoreWrite<T>(doc: T): T {
   return stripUndefinedDeep(doc);
 }
 
+export const BASELINE_META_KEY = 'baseline:global';
+
 export async function upsertFacilities(facilities: FacilityDoc[]) {
   if (facilities.length === 0) return;
   const db = getFirestoreAdmin();
@@ -19,8 +21,14 @@ export async function upsertFacilities(facilities: FacilityDoc[]) {
 export async function getFacilitiesByRegion(sido: string, sigungu?: string) {
   const db = getFirestoreAdmin();
   let query = db.collection('facilities').where('sido', '==', sido);
-  if (sigungu) query = query.where('sigungu', '==', sigungu);
+  if (sigungu) query = query.where('sigungu', '==', sigungu.replace(/\s+/g, ''));
   const snap = await query.get();
+  return snap.docs.map((d) => d.data() as FacilityDoc);
+}
+
+export async function getAllFacilities() {
+  const db = getFirestoreAdmin();
+  const snap = await db.collection('facilities').get();
   return snap.docs.map((d) => d.data() as FacilityDoc);
 }
 
@@ -43,7 +51,7 @@ export async function upsertRideCache(doc: RideCacheDoc) {
   await db.collection('rideCache').doc(String(doc.pfctSn)).set(sanitizeForFirestoreWrite(doc), { merge: true });
 }
 
-export async function setCacheMeta(regionKey: string, meta: CacheMetaDoc) {
+export async function setCacheMeta(regionKey: string, meta: Partial<CacheMetaDoc>) {
   const db = getFirestoreAdmin();
   await db.collection('cacheMeta').doc(regionKey).set(sanitizeForFirestoreWrite(meta), { merge: true });
 }
@@ -54,24 +62,37 @@ export async function getCacheMeta(regionKey: string) {
   return snap.exists ? (snap.data() as CacheMetaDoc) : null;
 }
 
+export async function setSigunguIndex(sido: string, sigungu: string[]) {
+  const db = getFirestoreAdmin();
+  await db.collection('sigunguIndex').doc(sido).set({ sido, sigungu, updatedAt: new Date().toISOString() }, { merge: true });
+}
+
 export async function getSigunguBySido(sido: string) {
   const db = getFirestoreAdmin();
+  const doc = await db.collection('sigunguIndex').doc(sido).get();
+  if (doc.exists) {
+    const list = (doc.get('sigungu') as string[] | undefined) ?? [];
+    if (list.length > 0) return [...new Set(list)].sort();
+  }
+
   const snap = await db.collection('facilities').where('sido', '==', sido).select('sigungu').get();
   return [...new Set(snap.docs.map((d) => String(d.get('sigungu') ?? '')).filter(Boolean))].sort();
 }
 
 export async function getCollectionCounts() {
   const db = getFirestoreAdmin();
-  const [facilities, rideCache, cacheMeta] = await Promise.all([
+  const [facilities, rideCache, cacheMeta, sigunguIndex] = await Promise.all([
     db.collection('facilities').count().get(),
     db.collection('rideCache').count().get(),
     db.collection('cacheMeta').count().get(),
+    db.collection('sigunguIndex').count().get(),
   ]);
 
   return {
     facilities: facilities.data().count,
     rideCache: rideCache.data().count,
     cacheMeta: cacheMeta.data().count,
+    sigunguIndex: sigunguIndex.data().count,
   };
 }
 
