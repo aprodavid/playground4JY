@@ -1,9 +1,10 @@
 import { z } from 'zod';
-import { BASELINE_META_KEY, createJob, getLatestJob, setCacheMeta } from '@/lib/firestore-repo';
+import { BASELINE_META_KEY, createJob, getCacheMeta, getLatestJob, setCacheMeta } from '@/lib/firestore-repo';
 import { jsonError, jsonOk, parseJsonBody } from '@/lib/admin-json';
 
 const schema = z.object({
   type: z.enum(['baseline', 'ride']),
+  mode: z.enum(['normal', 'force-rebuild']).optional(),
 });
 
 export const runtime = 'nodejs';
@@ -16,9 +17,19 @@ export async function POST(req: Request) {
     }
 
     const { type } = parsed.data;
+    const mode = parsed.data.mode ?? 'normal';
     const running = await getLatestJob(type);
     if (running && (running.status === 'queued' || running.status === 'running')) {
       return jsonOk({ message: 'already running', job: running }, 409);
+    }
+
+    const baselineMeta = await getCacheMeta(BASELINE_META_KEY);
+    if (type === 'baseline' && mode !== 'force-rebuild' && baselineMeta?.baselineReady && baselineMeta?.baselineStatus === 'success') {
+      return jsonOk({
+        message: 'baseline already ready; reuse enabled',
+        skipped: true,
+        baselineMeta,
+      }, 200);
     }
 
     const job = await createJob(type);
@@ -28,9 +39,13 @@ export async function POST(req: Request) {
         regionKey: BASELINE_META_KEY,
         status: 'running',
         baselineStatus: 'running',
+        baselineReady: false,
         baselineCurrentStage: 'queued',
         baselineStartedAt: job.startedAt ?? now,
         baselineUpdatedAt: now,
+        baselineVersion: mode === 'force-rebuild' ? now : (baselineMeta?.baselineVersion ?? now),
+        baselineBuildMode: mode,
+        lastSuccessfulBaselineAt: baselineMeta?.lastSuccessfulBaselineAt,
         done: false,
       });
     } else {

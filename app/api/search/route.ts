@@ -29,14 +29,14 @@ export async function POST(req: Request) {
     const ws = weights ?? DEFAULT_WEIGHTS;
 
     const baselineMeta = await getCacheMeta(BASELINE_META_KEY);
-    if (!baselineMeta || baselineMeta.baselineStatus !== 'success') {
+    if (!baselineMeta || baselineMeta.baselineStatus !== 'success' || !baselineMeta.baselineReady) {
       return NextResponse.json({
         summary: { totalCandidates: 0, recommended: 0 },
         excellentSection: [],
         top: [],
         nearMiss: [],
         needsCacheBuild: true,
-        message: '시설 기준선 캐시가 준비되지 않았습니다. 먼저 기준선 캐시를 생성하세요.',
+        message: '기준선 캐시 생성 필요: 운영 패널에서 기준선 캐시 생성을 먼저 실행하세요.',
         emptyReason: baselineMeta?.baselineStatus === 'running' ? 'baseline-running' : 'baseline-not-ready',
       }, { status: 409 });
     }

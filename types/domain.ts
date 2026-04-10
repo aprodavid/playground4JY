@@ -73,6 +73,7 @@ export type FacilityDoc = {
   area: number;
   areaMissing: boolean;
   isExcellent: boolean;
+  contentHash?: string;
   updatedAt: string;
 };
 
@@ -139,6 +140,9 @@ export type CacheMetaDoc = {
   stopRequested?: boolean;
 
   baselineStatus?: 'idle' | 'running' | 'success' | 'error' | 'stopped';
+  baselineReady?: boolean;
+  baselineVersion?: string;
+  lastSuccessfulBaselineAt?: string;
   baselineSource?: 'file-import' | 'api-crawl' | 'none';
   baselinePagesFetched?: number;
   baselineRawFacilityCount?: number;
@@ -150,6 +154,7 @@ export type CacheMetaDoc = {
   baselineCurrentInstallPlace?: string | null;
   baselineCurrentPage?: number;
   baselineTotalPages?: number | null;
+  baselineBuildMode?: 'normal' | 'force-rebuild';
   baselineSampleMatchedRegions?: string[];
   baselineUnmatchedReasonCount?: Record<string, number>;
   baselineImportProgress?: ImportProgress;

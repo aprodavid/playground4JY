@@ -13,13 +13,27 @@ const EXFC5_UPLOAD_COLLECTION = 'baselineUploadExfc5';
 export async function upsertFacilities(facilities: FacilityDoc[]) {
   if (facilities.length === 0) return;
   const db = getFirestoreAdmin();
-  for (let i = 0; i < facilities.length; i += 400) {
-    const batch = db.batch();
-    facilities.slice(i, i + 400).forEach((f) => {
-      batch.set(db.collection('facilities').doc(String(f.pfctSn)), sanitizeForFirestoreWrite(f), { merge: true });
+  const refs = facilities.map((f) => db.collection('facilities').doc(String(f.pfctSn)));
+  const existingDocs = new Map<string, FirebaseFirestore.DocumentData>();
+
+  for (let i = 0; i < refs.length; i += 250) {
+    const chunkRefs = refs.slice(i, i + 250);
+    const snapshots = await db.getAll(...chunkRefs);
+    snapshots.forEach((snapshot) => {
+      if (snapshot.exists) existingDocs.set(snapshot.id, snapshot.data() ?? {});
     });
-    await batch.commit();
   }
+
+  const writer = db.bulkWriter();
+  for (const facility of facilities) {
+    const id = String(facility.pfctSn);
+    const existing = existingDocs.get(id);
+    if (existing && existing.contentHash && existing.contentHash === facility.contentHash) {
+      continue;
+    }
+    writer.set(db.collection('facilities').doc(id), sanitizeForFirestoreWrite(facility), { merge: true });
+  }
+  await writer.close();
 }
 
 export async function replaceFacilities(facilities: FacilityDoc[]) {

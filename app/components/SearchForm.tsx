@@ -17,7 +17,26 @@ type StatusResponse = {
   env: Record<string, boolean>;
   firebase: { ok: boolean; error: string | null };
   counts: { facilities: number; rideCache: number; cacheMeta: number; sigunguIndex: number; jobs: number };
-  baselineMeta: { baselineStatus?: string } | null;
+  baselineMeta: {
+    baselineStatus?: string;
+    baselineReady?: boolean;
+    baselineVersion?: string;
+    lastSuccessfulBaselineAt?: string;
+    baselineCurrentStage?: string;
+    baselineCurrentPage?: number;
+    baselineTotalPages?: number | null;
+    baselinePagesFetched?: number;
+    baselineRawFacilityCount?: number;
+    baselineFilteredFacilityCount?: number;
+    rideProgress?: {
+      totalTargets: number;
+      processedTargets: number;
+      updatedTargets: number;
+      errorTargets: number;
+      skippedExistingTargets: number;
+    };
+    rideStatus?: string;
+  } | null;
   jobs: { baseline: JobDoc | null; ride: JobDoc | null };
 };
 
@@ -36,7 +55,7 @@ export default function SearchForm() {
   const [globalError, setGlobalError] = useState('');
   const [loadingSearch, setLoadingSearch] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState(false);
-  const [runningAdminAction, setRunningAdminAction] = useState<'' | 'baseline' | 'ride' | 'stop'>('');
+  const [runningAdminAction, setRunningAdminAction] = useState<'' | 'baseline' | 'baseline-force' | 'ride' | 'stop'>('');
 
   useEffect(() => {
     fetch('/api/sido').then((r) => r.json()).then((d) => setSidoList(d.sido ?? [])).catch(() => setGlobalError('시/도 목록을 불러오지 못했습니다.'));
@@ -80,13 +99,19 @@ export default function SearchForm() {
 
   useEffect(() => { if (sido) loadSigungu(sido); }, [loadSigungu, sido]);
 
-  const progress = useMemo(() => {
-    const job = status?.jobs?.baseline ?? status?.jobs?.ride;
-    const totalPages = job?.totalPages ?? 0;
-    const pagesFetched = job?.pagesFetched ?? 0;
+  const baselineProgress = useMemo(() => {
+    const totalPages = status?.jobs?.baseline?.totalPages ?? status?.baselineMeta?.baselineTotalPages ?? 0;
+    const pagesFetched = status?.jobs?.baseline?.pagesFetched ?? status?.baselineMeta?.baselinePagesFetched ?? 0;
     if (!totalPages || totalPages <= 0) return 0;
     return Math.max(0, Math.min(100, Math.round((pagesFetched / totalPages) * 100)));
-  }, [status?.jobs?.baseline, status?.jobs?.ride]);
+  }, [status?.jobs?.baseline, status?.baselineMeta?.baselinePagesFetched, status?.baselineMeta?.baselineTotalPages]);
+
+  const rideProgress = useMemo(() => {
+    const totalTargets = status?.baselineMeta?.rideProgress?.totalTargets ?? status?.jobs?.ride?.totalPages ?? 0;
+    const processedTargets = status?.baselineMeta?.rideProgress?.processedTargets ?? status?.jobs?.ride?.currentPage ?? 0;
+    if (!totalTargets || totalTargets <= 0) return 0;
+    return Math.max(0, Math.min(100, Math.round((processedTargets / totalTargets) * 100)));
+  }, [status?.baselineMeta?.rideProgress, status?.jobs?.ride?.currentPage, status?.jobs?.ride?.totalPages]);
 
   async function onSearch() {
     setLoadingSearch(true);
@@ -109,8 +134,9 @@ export default function SearchForm() {
     }
   }
 
-  async function runJob(type: 'baseline' | 'ride') {
-    const res = await fetch('/api/admin/jobs/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type }) });
+  async function runJob(type: 'baseline' | 'ride', mode: 'normal' | 'force-rebuild' = 'normal') {
+    const payload = type === 'baseline' ? { type, mode } : { type };
+    const res = await fetch('/api/admin/jobs/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     const json = await res.json();
     if (!res.ok && res.status !== 409) throw new Error(json.detailMessage ?? json.message ?? `${type} job 시작 실패`);
   }
@@ -126,14 +152,17 @@ export default function SearchForm() {
     if (!res.ok) throw new Error(json.detailMessage ?? json.message ?? '중지 실패');
   }
 
-  async function runAdminAction(action: 'baseline' | 'ride' | 'stop') {
+  async function runAdminAction(action: 'baseline' | 'baseline-force' | 'ride' | 'stop') {
     setRunningAdminAction(action);
     setGlobalError('');
     setGlobalMessage('');
     try {
       if (action === 'baseline') {
-        await runJob('baseline');
-        setGlobalMessage('기준선 캐시 빌드 작업을 큐에 등록했습니다.');
+        await runJob('baseline', 'normal');
+        setGlobalMessage('기준선 캐시 생성(없으면 생성, 있으면 재사용)을 처리했습니다.');
+      } else if (action === 'baseline-force') {
+        await runJob('baseline', 'force-rebuild');
+        setGlobalMessage('기준선 강제 재생성 작업을 큐에 등록했습니다.');
       } else if (action === 'ride') {
         await runJob('ride');
         setGlobalMessage('ride 캐시 갱신 작업을 큐에 등록했습니다.');
@@ -163,8 +192,8 @@ export default function SearchForm() {
     <section className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">사용자 검색은 Firestore facilities/rideCache 캐시만 사용합니다. baseline/ride 생성은 Firebase Functions 백그라운드 작업으로 처리됩니다.</section>
 
     <section className="rounded-xl bg-white p-4 shadow"><h2 className="mb-3 text-lg font-bold">운영 패널</h2>
-      <div className="flex flex-wrap gap-2"><button onClick={() => runAdminAction('baseline')} disabled={runningAdminAction !== ''} className="rounded bg-blue-700 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-400">기준선 캐시 빌드 시작</button><button onClick={() => runAdminAction('ride')} disabled={runningAdminAction !== '' || status?.baselineMeta?.baselineStatus !== 'success'} className="rounded bg-indigo-700 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-400">ride 캐시 갱신 시작</button><button onClick={refreshStatus} disabled={loadingStatus} className="rounded border px-3 py-2 text-sm">상태 새로고침</button><button onClick={() => runAdminAction('stop')} disabled={runningAdminAction !== '' || !activeJob?.jobId} className="rounded bg-rose-700 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-400">작업 중지</button></div>
-      <div className="mt-3 rounded border bg-slate-50 p-3 text-xs"><p>활성 작업: {activeJob?.type ?? '-'} ({activeJob?.status ?? 'idle'})</p><p>현재 단계: {activeJob?.currentStage ?? '-'}</p><p>현재 페이지: {activeJob?.currentPage ?? '-'} / {activeJob?.totalPages ?? '-'}</p><p>현재 설치장소: {activeJob?.currentInstallPlace ?? '-'}</p><p>성공/실패: {activeJob?.successCount ?? 0} / {activeJob?.errorCount ?? 0}</p><p>마지막 오류: {activeJob?.lastError ?? '-'}</p><div className="mt-2 mb-1 h-3 w-full overflow-hidden rounded bg-slate-200"><div className="h-full bg-blue-600" style={{ width: `${progress}%` }} /></div><p>진행률: {progress}%</p></div>
+      <div className="flex flex-wrap gap-2"><button onClick={() => runAdminAction('baseline')} disabled={runningAdminAction !== ''} className="rounded bg-blue-700 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-400">기준선 캐시 생성</button><button onClick={() => runAdminAction('baseline-force')} disabled={runningAdminAction !== ''} className="rounded bg-sky-800 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-400">기준선 강제 재생성</button><button onClick={() => runAdminAction('ride')} disabled={runningAdminAction !== '' || status?.baselineMeta?.baselineStatus !== 'success'} className="rounded bg-indigo-700 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-400">ride 캐시 갱신</button><button onClick={refreshStatus} disabled={loadingStatus} className="rounded border px-3 py-2 text-sm">상태 새로고침</button><button onClick={() => runAdminAction('stop')} disabled={runningAdminAction !== '' || !activeJob?.jobId} className="rounded bg-rose-700 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-400">작업 중지</button></div>
+      <div className="mt-3 rounded border bg-slate-50 p-3 text-xs space-y-2"><p>기준선 상태: {status?.baselineMeta?.baselineReady ? '이미 준비됨' : '미준비'} / {status?.baselineMeta?.baselineStatus ?? 'idle'} / version {status?.baselineMeta?.baselineVersion ?? '-'}</p><p>기준선 마지막 성공 시각: {status?.baselineMeta?.lastSuccessfulBaselineAt ?? '-'}</p><div><p>Baseline 단계: {status?.jobs?.baseline?.currentStage ?? status?.baselineMeta?.baselineCurrentStage ?? '-'}</p><p>Baseline 페이지: {status?.jobs?.baseline?.currentPage ?? status?.baselineMeta?.baselineCurrentPage ?? '-'} / {status?.jobs?.baseline?.totalPages ?? status?.baselineMeta?.baselineTotalPages ?? '-'}</p><p>Baseline 누적: pages {status?.baselineMeta?.baselinePagesFetched ?? 0}, raw {status?.baselineMeta?.baselineRawFacilityCount ?? 0}, filtered {status?.baselineMeta?.baselineFilteredFacilityCount ?? 0}</p><div className="mt-1 mb-1 h-3 w-full overflow-hidden rounded bg-slate-200"><div className="h-full bg-blue-600" style={{ width: `${baselineProgress}%` }} /></div><p>Baseline 진행률: {baselineProgress}%</p></div><div><p>Ride 상태: {status?.baselineMeta?.rideStatus ?? status?.jobs?.ride?.status ?? 'idle'}</p><p>Ride 진행: {status?.baselineMeta?.rideProgress?.processedTargets ?? status?.jobs?.ride?.currentPage ?? 0} / {status?.baselineMeta?.rideProgress?.totalTargets ?? status?.jobs?.ride?.totalPages ?? 0}</p><p>Ride 누적: updated {status?.baselineMeta?.rideProgress?.updatedTargets ?? status?.jobs?.ride?.successCount ?? 0}, error {status?.baselineMeta?.rideProgress?.errorTargets ?? status?.jobs?.ride?.errorCount ?? 0}, skipped {status?.baselineMeta?.rideProgress?.skippedExistingTargets ?? 0}</p><div className="mt-1 mb-1 h-3 w-full overflow-hidden rounded bg-slate-200"><div className="h-full bg-indigo-600" style={{ width: `${rideProgress}%` }} /></div><p>Ride 진행률: {rideProgress}%</p></div><p>활성 작업: {activeJob?.type ?? '-'} ({activeJob?.status ?? 'idle'})</p><p>마지막 오류: {activeJob?.lastError ?? '-'}</p></div>
     </section>
 
     <section className="rounded-xl bg-white p-4 shadow"><h2 className="mb-4 text-lg font-bold">검색 조건</h2><div className="grid gap-3 md:grid-cols-2"><select className="rounded border p-2" value={sido} onChange={(e) => setSido(e.target.value)}><option value="">시/도 선택</option>{sidoList.map((x) => <option key={x} value={x}>{x}</option>)}</select><select className="rounded border p-2" value={sigungu} onChange={(e) => setSigungu(e.target.value)} disabled={!sido || sigunguList.length === 0}><option value="">시/군/구 선택</option>{sigunguList.map((x) => <option key={x} value={x}>{x}</option>)}</select><input className="rounded border p-2" type="number" placeholder="설치연도(이후)" value={installYearFrom} onChange={(e) => setInstallYearFrom(e.target.value ? Number(e.target.value) : '')} /><input className="rounded border p-2" type="number" min={1} max={50} value={topN} onChange={(e) => setTopN(Number(e.target.value))} /></div><div className="mt-3"><p className="mb-2 text-sm font-semibold">설치장소</p><div className="flex flex-wrap gap-3">{Object.entries(INSTALL_PLACE_LABELS).map(([code, label]) => (<label key={code} className="flex items-center gap-1 text-sm"><input type="checkbox" checked={installPlaces.includes(code)} onChange={(e) => { setInstallPlaces((prev) => e.target.checked ? [...prev, code] : prev.filter((x) => x !== code)); }} />{label} ({code})</label>))}</div></div><div className="mt-4 grid gap-2 md:grid-cols-3">{weightFields.map(([k, label]) => (<label key={k} className="text-xs">{label}<input className="mt-1 w-full rounded border p-2" type="number" value={weights[k]} onChange={(e) => setWeights((prev) => ({ ...prev, [k]: Number(e.target.value) }))} /></label>))}</div><button onClick={onSearch} disabled={loadingSearch || !sido} className="mt-4 rounded bg-blue-600 px-4 py-2 font-semibold text-white disabled:bg-slate-400">{loadingSearch ? '검색 중...' : '검색 실행'}</button></section>
