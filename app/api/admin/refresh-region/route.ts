@@ -8,6 +8,31 @@ import { setCacheMeta, upsertFacilities } from '@/lib/firestore-repo';
 const schema = z.object({ sido: z.string().min(1), sigungu: z.string().optional() });
 export const runtime = 'nodejs';
 
+type FirestoreWriteErrorDetail = {
+  errorType: 'firestore-write';
+  message: string;
+  failingField: string | null;
+};
+
+function getFirestoreWriteErrorDetail(error: unknown): FirestoreWriteErrorDetail | null {
+  if (!(error instanceof Error)) return null;
+  const message = error.message ?? 'Firestore write failed';
+  const hasFirestoreSignal = message.includes('Firestore') || message.includes('undefined') || message.includes('Cannot use "undefined"');
+  if (!hasFirestoreSignal) return null;
+
+  const failingFieldMatch = message.match(/field\s+"([^"]+)"/i);
+  const failingField = failingFieldMatch?.[1] ?? null;
+  const normalizedMessage = failingField
+    ? `Firestore write failed: undefined field ${failingField}`
+    : `Firestore write failed: ${message}`;
+
+  return {
+    errorType: 'firestore-write',
+    message: normalizedMessage,
+    failingField,
+  };
+}
+
 export async function POST(req: Request) {
   let regionKey = 'unknown';
   let failingEndpoint: string | null = null;
@@ -35,11 +60,13 @@ export async function POST(req: Request) {
       lastBuildStatus: 'ok',
     });
 
-    return NextResponse.json({ regionKey, facilitiesCount: deduped.length });
+    return NextResponse.json({ regionKey, facilitiesCount: deduped.length, message: `지역 캐시 ${deduped.length}건 빌드 완료` });
   } catch (error) {
     if (error instanceof PublicDataError) {
       failingEndpoint = error.detail.endpoint;
     }
+
+    const firestoreWriteError = getFirestoreWriteErrorDetail(error);
 
     if (regionKey !== 'unknown') {
       await setCacheMeta(regionKey, {
@@ -48,7 +75,7 @@ export async function POST(req: Request) {
         facilitiesCount: 0,
         excellentCount: 0,
         lastBuildStatus: 'error',
-        lastError: error instanceof Error ? error.message : 'unknown error',
+        lastError: firestoreWriteError?.message ?? (error instanceof Error ? error.message : 'unknown error'),
       });
     }
     if (isMissingEnvError(error)) {
@@ -64,6 +91,20 @@ export async function POST(req: Request) {
         detailMessage: error.message,
       }, { status: 502 });
     }
-    return NextResponse.json({ message: 'refresh-region failed', errorType: 'unknown', endpoint: failingEndpoint }, { status: 500 });
+    if (firestoreWriteError) {
+      return NextResponse.json({
+        message: 'refresh-region failed',
+        errorType: firestoreWriteError.errorType,
+        detailMessage: firestoreWriteError.message,
+        failingField: firestoreWriteError.failingField,
+        endpoint: failingEndpoint,
+      }, { status: 500 });
+    }
+    return NextResponse.json({
+      message: 'refresh-region failed',
+      errorType: 'unknown',
+      endpoint: failingEndpoint,
+      detailMessage: error instanceof Error ? error.message : 'unknown error',
+    }, { status: 500 });
   }
 }
