@@ -23,8 +23,6 @@ export function getFirestoreAdmin() {
     return firestoreInstance;
   }
   const app = init();
-  firestoreInstance = initializeFirestore(app, {
-    ignoreUndefinedProperties: true,
-  });
+  firestoreInstance = initializeFirestore(app);
   return firestoreInstance;
 }
