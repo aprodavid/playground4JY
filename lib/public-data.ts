@@ -9,6 +9,8 @@ type ApiResponse = {
       totalCount?: number | string;
       pageNo?: number | string;
       numOfRows?: number | string;
+      pageIndex?: number | string;
+      recordCountPerPage?: number | string;
       totalPageCnt?: number | string;
       items?: { item?: ApiItem[] | ApiItem } | ApiItem[] | ApiItem;
     };
@@ -36,10 +38,25 @@ export type PublicDataCallMeta = {
   pageInfo: {
     totalPageCnt: number | null;
     totalCount: number | null;
+    pageIndex: number | null;
+    recordCountPerPage: number | null;
     pageNo: number | null;
     numOfRows: number | null;
   };
   attempts: AttemptResult[];
+};
+
+export type PaginatedFetchResult = {
+  items: ApiItem[];
+  pagesFetched: number;
+  totalPageCnt: number | null;
+  metaByPage: PublicDataCallMeta[];
+};
+
+export type InstallPlacePageFetchResult = {
+  items: ApiItem[];
+  pagesFetched: number;
+  metaByPage: PublicDataCallMeta[];
 };
 
 export class PublicDataError extends Error {
@@ -173,6 +190,8 @@ async function fetchDataWithMeta(endpointPath: string, params: Record<string, st
           pageInfo: {
             totalPageCnt: parseMaybeNumber(body?.totalPageCnt),
             totalCount: parseMaybeNumber(body?.totalCount),
+            pageIndex: parseMaybeNumber(body?.pageIndex),
+            recordCountPerPage: parseMaybeNumber(body?.recordCountPerPage),
             pageNo: parseMaybeNumber(body?.pageNo),
             numOfRows: parseMaybeNumber(body?.numOfRows),
           },
@@ -195,6 +214,49 @@ async function fetchDataWithMeta(endpointPath: string, params: Record<string, st
   throw finalError;
 }
 
+async function fetchAllPages(
+  endpointPath: string,
+  baseParams: Record<string, string | number>,
+  options?: { pageSize?: number; maxPages?: number },
+): Promise<PaginatedFetchResult> {
+  const pageSize = options?.pageSize ?? 500;
+  const maxPages = options?.maxPages ?? 1000;
+
+  const items: ApiItem[] = [];
+  const metaByPage: PublicDataCallMeta[] = [];
+  let pageIndex = 1;
+  let totalPageCnt: number | null = null;
+
+  while (pageIndex <= maxPages) {
+    const params = {
+      ...baseParams,
+      pageIndex,
+      recordCountPerPage: pageSize,
+    };
+
+    const page = await fetchDataWithMeta(endpointPath, params);
+    metaByPage.push(page.meta);
+    items.push(...page.items);
+
+    totalPageCnt = page.meta.pageInfo.totalPageCnt;
+    if (totalPageCnt !== null) {
+      if (pageIndex >= totalPageCnt) break;
+      pageIndex += 1;
+      continue;
+    }
+
+    if (page.items.length < pageSize) break;
+    pageIndex += 1;
+  }
+
+  return {
+    items,
+    pagesFetched: metaByPage.length,
+    totalPageCnt,
+    metaByPage,
+  };
+}
+
 export async function fetchPfc3WithMeta(params: Record<string, string | number>) {
   return fetchDataWithMeta('/pfc3/getPfctInfo3', params);
 }
@@ -202,6 +264,35 @@ export async function fetchPfc3WithMeta(params: Record<string, string | number>)
 export async function fetchPfc3(params: Record<string, string | number>) {
   const result = await fetchPfc3WithMeta(params);
   return result.items;
+}
+
+export async function fetchPfc3AllPages(params: Record<string, string | number>, options?: { pageSize?: number; maxPages?: number }) {
+  return fetchAllPages('/pfc3/getPfctInfo3', params, options);
+}
+
+export const PFC3_INSTALL_PLACE_CODES = ['A003', 'A022', 'A033'] as const;
+
+export async function fetchPfc3AcrossInstallPlaces(options?: {
+  pageSize?: number;
+  maxPages?: number;
+  extraParams?: Record<string, string | number>;
+}): Promise<InstallPlacePageFetchResult> {
+  const items: ApiItem[] = [];
+  const metaByPage: PublicDataCallMeta[] = [];
+
+  for (const installPlaceCode of PFC3_INSTALL_PLACE_CODES) {
+    const result = await fetchPfc3AllPages(
+      {
+        ...(options?.extraParams ?? {}),
+        inslPlcSeCd: installPlaceCode,
+      },
+      { pageSize: options?.pageSize, maxPages: options?.maxPages },
+    );
+    items.push(...result.items);
+    metaByPage.push(...result.metaByPage);
+  }
+
+  return { items, pagesFetched: metaByPage.length, metaByPage };
 }
 
 export async function fetchRide4(pfctSn: number) {
@@ -212,4 +303,8 @@ export async function fetchRide4(pfctSn: number) {
 export async function fetchExfc5(params: Record<string, string | number>) {
   const result = await fetchDataWithMeta('/exfc5/getExfc5', params);
   return result.items;
+}
+
+export async function fetchExfc5AllPages(params: Record<string, string | number>, options?: { pageSize?: number; maxPages?: number }) {
+  return fetchAllPages('/exfc5/getExfc5', params, options);
 }

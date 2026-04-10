@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { dedupeByCoordinate, stripUndefinedDeep, toFacilityDoc } from '@/lib/normalization';
-import { fetchExfc5, fetchPfc3, PublicDataError } from '@/lib/public-data';
+import { dedupeByCoordinate, matchesSelectedRegion, stripUndefinedDeep, toFacilityDoc } from '@/lib/normalization';
+import { fetchExfc5AllPages, fetchPfc3AcrossInstallPlaces, PublicDataError } from '@/lib/public-data';
 import { isMissingEnvError } from '@/lib/env';
 import { setCacheMeta, upsertFacilities } from '@/lib/firestore-repo';
 
@@ -34,33 +34,65 @@ function getFirestoreWriteErrorDetail(error: unknown): FirestoreWriteErrorDetail
 }
 
 export async function POST(req: Request) {
+  const startedAt = Date.now();
   let regionKey = 'unknown';
   let failingEndpoint: string | null = null;
+  let pagesFetched = 0;
+  let rawFacilityCount = 0;
+  let filteredFacilityCount = 0;
+
   try {
     const parsed = schema.safeParse(await req.json());
     if (!parsed.success) return NextResponse.json({ errors: parsed.error.flatten() }, { status: 400 });
 
     const { sido, sigungu } = parsed.data;
     regionKey = `${sido}:${sigungu ?? 'ALL'}`;
-    const [pfc3, exfc5] = await Promise.all([
-      fetchPfc3({ ctprvnNm: sido, ...(sigungu ? { signguNm: sigungu } : {}) }),
-      fetchExfc5({ ctprvnNm: sido, ...(sigungu ? { signguNm: sigungu } : {}) }),
+
+    const [pfc3Result, exfc5Result] = await Promise.all([
+      fetchPfc3AcrossInstallPlaces({ pageSize: 500 }),
+      fetchExfc5AllPages({ ctprvnNm: sido, ...(sigungu ? { signguNm: sigungu } : {}) }, { pageSize: 500 }),
     ]);
 
-    const excellentSet = new Set(exfc5.map((x) => Number(x.pfctSn)));
-    const normalized = pfc3.map((row) => toFacilityDoc(row, excellentSet.has(Number(row.pfctSn))));
+    pagesFetched = pfc3Result.pagesFetched + exfc5Result.pagesFetched;
+    rawFacilityCount = pfc3Result.items.length;
+
+    const regionFilteredRows = pfc3Result.items.filter((row) => matchesSelectedRegion(row, sido, sigungu));
+    filteredFacilityCount = regionFilteredRows.length;
+
+    const excellentSet = new Set(
+      exfc5Result.items
+        .filter((row) => matchesSelectedRegion(row, sido, sigungu))
+        .map((x) => Number(x.pfctSn)),
+    );
+
+    const normalized = regionFilteredRows.map((row) => toFacilityDoc(row, excellentSet.has(Number(row.pfctSn))));
     const deduped = dedupeByCoordinate(normalized).map((facility) => stripUndefinedDeep(facility));
 
     await upsertFacilities(deduped);
+
+    const buildDurationMs = Date.now() - startedAt;
     await setCacheMeta(regionKey, stripUndefinedDeep({
       regionKey,
       lastBuiltAt: new Date().toISOString(),
       facilitiesCount: deduped.length,
       excellentCount: deduped.filter((x) => x.isExcellent).length,
+      pagesFetched,
+      rawFacilityCount,
+      filteredFacilityCount,
+      selectedRegion: stripUndefinedDeep({ sido, ...(sigungu ? { sigungu } : {}) }),
+      buildDurationMs,
       lastBuildStatus: 'ok',
     }));
 
-    return NextResponse.json({ regionKey, facilitiesCount: deduped.length, message: `지역 캐시 ${deduped.length}건 빌드 완료` });
+    return NextResponse.json({
+      regionKey,
+      facilitiesCount: deduped.length,
+      pagesFetched,
+      rawFacilityCount,
+      filteredFacilityCount,
+      buildDurationMs,
+      message: `지역 캐시 ${deduped.length}건 빌드 완료`,
+    });
   } catch (error) {
     if (error instanceof PublicDataError) {
       failingEndpoint = error.detail.endpoint;
@@ -74,6 +106,10 @@ export async function POST(req: Request) {
         lastBuiltAt: new Date().toISOString(),
         facilitiesCount: 0,
         excellentCount: 0,
+        pagesFetched,
+        rawFacilityCount,
+        filteredFacilityCount,
+        buildDurationMs: Date.now() - startedAt,
         lastBuildStatus: 'error',
         lastError: firestoreWriteError?.message ?? (error instanceof Error ? error.message : 'unknown error'),
       }));

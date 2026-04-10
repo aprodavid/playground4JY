@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { DEFAULT_WEIGHTS, RIDE_WHITELIST, type InstallPlaceCode, type RideCacheDoc } from '@/types/domain';
-import { fetchExfc5, fetchPfc3, fetchRide4, PublicDataError } from '@/lib/public-data';
+import { fetchExfc5AllPages, fetchPfc3AcrossInstallPlaces, fetchRide4, PublicDataError } from '@/lib/public-data';
 import { isMissingEnvError } from '@/lib/env';
 import { getFacilitiesByRegion, getRideCaches, setCacheMeta, upsertRideCache, upsertFacilities } from '@/lib/firestore-repo';
 import { scoreFacility } from '@/lib/scoring';
-import { dedupeByCoordinate, toFacilityDoc } from '@/lib/normalization';
+import { dedupeByCoordinate, matchesSelectedRegion, toFacilityDoc } from '@/lib/normalization';
 
 const schema = z.object({
   sido: z.string().min(1),
@@ -58,12 +58,13 @@ async function buildRideCache(pfctSn: number): Promise<RideCacheDoc> {
 async function ensureFacilityCache(sido: string, sigungu?: string) {
   const regionKey = `${sido}:${sigungu ?? 'ALL'}`;
   const [pfc3, exfc5] = await Promise.all([
-    fetchPfc3({ ctprvnNm: sido, ...(sigungu ? { signguNm: sigungu } : {}) }),
-    fetchExfc5({ ctprvnNm: sido, ...(sigungu ? { signguNm: sigungu } : {}) }),
+    fetchPfc3AcrossInstallPlaces({ pageSize: 500 }),
+    fetchExfc5AllPages({ ctprvnNm: sido, ...(sigungu ? { signguNm: sigungu } : {}) }, { pageSize: 500 }),
   ]);
 
-  const excellentSet = new Set(exfc5.map((x) => Number(x.pfctSn)));
-  const normalized = pfc3.map((row) => toFacilityDoc(row, excellentSet.has(Number(row.pfctSn))));
+  const filteredRows = pfc3.items.filter((row) => matchesSelectedRegion(row, sido, sigungu));
+  const excellentSet = new Set(exfc5.items.map((x) => Number(x.pfctSn)));
+  const normalized = filteredRows.map((row) => toFacilityDoc(row, excellentSet.has(Number(row.pfctSn))));
   const deduped = dedupeByCoordinate(normalized);
   await upsertFacilities(deduped);
   await setCacheMeta(regionKey, {
@@ -71,6 +72,10 @@ async function ensureFacilityCache(sido: string, sigungu?: string) {
     lastBuiltAt: new Date().toISOString(),
     facilitiesCount: deduped.length,
     excellentCount: deduped.filter((x) => x.isExcellent).length,
+    pagesFetched: pfc3.pagesFetched + exfc5.pagesFetched,
+    rawFacilityCount: pfc3.items.length,
+    filteredFacilityCount: filteredRows.length,
+    selectedRegion: sigungu ? { sido, sigungu } : { sido },
     lastBuildStatus: 'ok',
   });
   return deduped.length;

@@ -32,7 +32,14 @@ export async function GET() {
       status: null as number | null,
       parseOk: false,
       itemCount: 0,
-      pageInfo: { totalPageCnt: null as number | null, totalCount: null as number | null, pageNo: null as number | null, numOfRows: null as number | null },
+      pageInfo: {
+        totalPageCnt: null as number | null,
+        totalCount: null as number | null,
+        pageIndex: null as number | null,
+        recordCountPerPage: null as number | null,
+        pageNo: null as number | null,
+        numOfRows: null as number | null,
+      },
       attempts: [] as unknown[],
       errorType: null as string | null,
       errorMessage: null as string | null,
@@ -44,7 +51,7 @@ export async function GET() {
   try {
     getEnv('PUBLIC_DATA_BASE_URL');
     getEnv('PUBLIC_DATA_SERVICE_KEY');
-    const pfc3 = await fetchPfc3WithMeta({ numOfRows: 1, pageNo: 1 });
+    const pfc3 = await fetchPfc3WithMeta({ pageIndex: 1, recordCountPerPage: 1 });
     const attempts = pfc3.meta.attempts;
     result.publicApi.ok = true;
     result.publicApi.baseUrl = pfc3.meta.baseUrl;
