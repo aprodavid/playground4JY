@@ -44,3 +44,5 @@ npm run dev
 - Firebase 관련 Route Handler는 모두 `runtime = 'nodejs'`를 유지합니다.
 - `FIREBASE_PRIVATE_KEY`는 `\\n` 문자열 줄바꿈을 서버에서 실제 줄바꿈으로 복원합니다.
 - 공공데이터 API는 브라우저에서 직접 호출하지 않고 Route Handler를 통해서만 호출됩니다.
+- ESLint는 Next 15 호환 flat config(`next/core-web-vitals`, `next/typescript`)로 유지합니다.
+- Vercel/프로덕션 빌드에서는 `next.config.ts`의 `eslint.ignoreDuringBuilds`로 린트 설정 이슈가 배포를 차단하지 않도록 보호합니다.
