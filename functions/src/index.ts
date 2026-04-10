@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
@@ -12,6 +13,9 @@ const PUBLIC_DATA_BASE_URL = defineString('PUBLIC_DATA_BASE_URL');
 const PUBLIC_DATA_SERVICE_KEY = defineSecret('PUBLIC_DATA_SERVICE_KEY');
 const BASELINE_META_KEY = 'baseline:global';
 const INSTALL_PLACES = ['A003', 'A022', 'A033'] as const;
+const BASELINE_STEP_BUDGET = 2;
+const RIDE_STEP_TARGETS = 40;
+type NormalizedFacility = Record<string, unknown> & { contentHash: string; pfctSn: number };
 
 type JobType = 'baseline' | 'ride';
 type JobStatus = 'queued' | 'running' | 'success' | 'error' | 'stopped';
@@ -42,8 +46,14 @@ type JobDoc = {
     excellent?: number[];
     offset?: number;
     targets?: number[];
+    initialized?: boolean;
+    scannedTargets?: number;
   };
 };
+
+function nowIso() {
+  return new Date().toISOString();
+}
 
 function normalizeSido(input?: string) {
   if (!input) return '';
@@ -82,6 +92,23 @@ function txt(v: unknown) {
   return s || undefined;
 }
 
+function computeFacilityHash(doc: Record<string, unknown>) {
+  const payload = JSON.stringify({
+    pfctSn: doc.pfctSn,
+    facilityName: doc.facilityName,
+    installPlaceCode: doc.installPlaceCode,
+    normalizedAddress: doc.normalizedAddress,
+    sido: doc.sido,
+    sigungu: doc.sigungu,
+    installYear: doc.installYear ?? null,
+    area: doc.area,
+    lat: doc.lat ?? null,
+    lng: doc.lng ?? null,
+    isExcellent: doc.isExcellent,
+  });
+  return createHash('sha1').update(payload).digest('hex');
+}
+
 function normalizeFacility(raw: Record<string, unknown>, isExcellent: boolean) {
   const address = txt(pick(raw, ['rdnmadr', 'lnmadr', 'addr', 'detailAddr', 'address', '소재지도로명주소', '소재지지번주소'])) ?? '';
   const tokens = address.split(' ').filter(Boolean);
@@ -90,7 +117,7 @@ function normalizeFacility(raw: Record<string, unknown>, isExcellent: boolean) {
   const pfctSn = Number(pick(raw, ['pfctSn', '시설일련번호']));
   if (!Number.isFinite(pfctSn) || !sido) return null;
 
-  return {
+  const normalized = {
     pfctSn,
     facilityName: txt(pick(raw, ['pfctNm', '시설명'])) ?? '이름없음',
     installPlaceCode: String(pick(raw, ['inslPlcSeCd'])) || 'A003',
@@ -104,32 +131,50 @@ function normalizeFacility(raw: Record<string, unknown>, isExcellent: boolean) {
     lat: num(pick(raw, ['latitude', 'lat', '위도'])),
     lng: num(pick(raw, ['longitude', 'lng', '경도'])),
     isExcellent,
-    updatedAt: new Date().toISOString(),
+    updatedAt: nowIso(),
+  } as Record<string, unknown>;
+
+  return {
+    ...normalized,
+    contentHash: computeFacilityHash(normalized),
   };
 }
 
 async function callApi(endpoint: string, params: Record<string, string | number>, key: string) {
   const base = PUBLIC_DATA_BASE_URL.value().replace(/\/$/, '');
-  const url = new URL(`${base}${endpoint}`);
-  url.searchParams.set('serviceKey', key);
-  url.searchParams.set('_type', 'json');
-  for (const [k, v] of Object.entries(params)) {
-    url.searchParams.set(k, String(v));
+  const attempts: string[] = [];
+  const keyCandidates = [key, encodeURIComponent(key)].filter((v, i, arr) => arr.indexOf(v) === i);
+
+  let lastStatus = 0;
+  let lastText = '';
+  for (const candidate of keyCandidates) {
+    const url = new URL(`${base}${endpoint}`);
+    url.searchParams.set('serviceKey', candidate);
+    url.searchParams.set('_type', 'json');
+    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
+
+    const res = await fetch(url.toString(), { cache: 'no-store' });
+    attempts.push(`${candidate === key ? 'raw' : 'encoded'}:${res.status}`);
+    lastStatus = res.status;
+    if (!res.ok) {
+      lastText = await res.text();
+      continue;
+    }
+
+    const json = await res.json() as {
+      response?: { body?: { items?: { item?: Record<string, unknown> | Record<string, unknown>[] }; totalPageCnt?: number } };
+    };
+    const body = json?.response?.body;
+    const items = body?.items?.item;
+    const list = Array.isArray(items) ? items : items ? [items] : [];
+
+    return {
+      list,
+      totalPages: Number(body?.totalPageCnt || 0) || null,
+    };
   }
 
-  const res = await fetch(url.toString(), { cache: 'no-store' });
-  if (!res.ok) throw new Error(`public api status ${res.status}`);
-  const json = await res.json() as {
-    response?: { body?: { items?: { item?: Record<string, unknown> | Record<string, unknown>[] }; totalPageCnt?: number } };
-  };
-  const body = json?.response?.body;
-  const items = body?.items?.item;
-  const list = Array.isArray(items) ? items : items ? [items] : [];
-
-  return {
-    list,
-    totalPages: Number(body?.totalPageCnt || 0) || null,
-  };
+  throw new Error(`public api failed ${endpoint} status=${lastStatus} attempts=${attempts.join(',')} detail=${lastText.slice(0, 300)}`);
 }
 
 async function upsertBaselineMeta(patch: Record<string, unknown>) {
@@ -139,9 +184,56 @@ async function upsertBaselineMeta(patch: Record<string, unknown>) {
   }, { merge: true });
 }
 
-async function processBaseline(job: JobDoc, serviceKey: string) {
+async function clearCollection(name: string) {
+  while (true) {
+    const snap = await db.collection(name).limit(400).get();
+    if (snap.empty) break;
+    const writer = db.bulkWriter();
+    snap.docs.forEach((d) => writer.delete(d.ref));
+    await writer.close();
+  }
+}
+
+async function upsertFacilitiesWithDiff(facilities: Record<string, unknown>[]) {
+  if (facilities.length === 0) return { writes: 0, skipped: 0 };
+  const refs = facilities.map((f) => db.collection('facilities').doc(String(f.pfctSn)));
+  const snapshots = await db.getAll(...refs);
+  const existingMap = new Map<string, Record<string, unknown>>();
+  snapshots.forEach((s) => { if (s.exists) existingMap.set(s.id, s.data() as Record<string, unknown>); });
+
+  const writer = db.bulkWriter();
+  let writes = 0;
+  let skipped = 0;
+
+  for (const facility of facilities) {
+    const id = String(facility.pfctSn);
+    const existing = existingMap.get(id);
+    if (existing?.contentHash && existing.contentHash === facility.contentHash) {
+      skipped += 1;
+      continue;
+    }
+    writer.set(db.collection('facilities').doc(id), facility, { merge: true });
+    writes += 1;
+  }
+
+  await writer.close();
+  return { writes, skipped };
+}
+
+async function processBaselineStep(job: JobDoc, serviceKey: string) {
   const cursor = job.cursor ?? {};
   const stage = cursor.stage ?? 'pfc3';
+  const metaDoc = await db.collection('cacheMeta').doc(BASELINE_META_KEY).get();
+  const baselineMeta = (metaDoc.data() ?? {}) as Record<string, unknown>;
+
+  if (!cursor.initialized) {
+    if (baselineMeta.baselineBuildMode === 'force-rebuild') {
+      await clearCollection('facilities');
+      await clearCollection('sigunguIndex');
+    }
+    await db.collection('jobs').doc(job.jobId).set({ cursor: { ...cursor, initialized: true, stage: 'pfc3', page: 1, installPlaceIndex: 0 } }, { merge: true });
+    return;
+  }
 
   if (stage === 'pfc3') {
     const installPlaceIndex = cursor.installPlaceIndex ?? 0;
@@ -150,12 +242,11 @@ async function processBaseline(job: JobDoc, serviceKey: string) {
 
     if (!installPlace) {
       await db.collection('jobs').doc(job.jobId).set({
-        status: 'running',
         currentStage: 'exfc5',
         currentInstallPlace: null,
         currentPage: 1,
         cursor: { ...cursor, stage: 'exfc5', excellentPage: 1 },
-        updatedAt: new Date().toISOString(),
+        updatedAt: nowIso(),
       }, { merge: true });
       return;
     }
@@ -170,18 +261,12 @@ async function processBaseline(job: JobDoc, serviceKey: string) {
 
     const normalized = fetched.list
       .map((r) => normalizeFacility(r, false))
-      .filter((doc): doc is NonNullable<ReturnType<typeof normalizeFacility>> => doc !== null);
+      .filter((doc): doc is NormalizedFacility => doc !== null);
 
-    for (let i = 0; i < normalized.length; i += 400) {
-      const batch = db.batch();
-      normalized.slice(i, i + 400).forEach((doc) => {
-        batch.set(db.collection('facilities').doc(String(doc.pfctSn)), doc, { merge: true });
-      });
-      await batch.commit();
-    }
-
+    const writeResult = await upsertFacilitiesWithDiff(normalized);
     const reachedEnd = fetched.totalPages ? page >= fetched.totalPages : fetched.list.length < 200;
-    const now = new Date().toISOString();
+    const now = nowIso();
+
     await db.collection('jobs').doc(job.jobId).set({
       status: 'running',
       currentStage: 'pfc3',
@@ -191,19 +276,25 @@ async function processBaseline(job: JobDoc, serviceKey: string) {
       pagesFetched: (job.pagesFetched ?? 0) + 1,
       rawFacilityCount: (job.rawFacilityCount ?? 0) + fetched.list.length,
       filteredFacilityCount: (job.filteredFacilityCount ?? 0) + normalized.length,
-      successCount: (job.successCount ?? 0) + normalized.length,
+      successCount: (job.successCount ?? 0) + writeResult.writes,
       cursor: {
         ...cursor,
         stage: 'pfc3',
         installPlaceIndex: reachedEnd ? installPlaceIndex + 1 : installPlaceIndex,
         page: reachedEnd ? 1 : page + 1,
+        initialized: true,
       },
       updatedAt: now,
+      resultSummary: {
+        ...(job.resultSummary ?? {}),
+        skippedUnchangedCount: Number((job.resultSummary as Record<string, unknown> | undefined)?.skippedUnchangedCount ?? 0) + writeResult.skipped,
+      },
     }, { merge: true });
 
     await upsertBaselineMeta({
       status: 'running',
       baselineStatus: 'running',
+      baselineReady: false,
       baselineSource: 'api-crawl',
       baselineCurrentStage: 'pfc3',
       baselineCurrentInstallPlace: installPlace,
@@ -229,13 +320,13 @@ async function processBaseline(job: JobDoc, serviceKey: string) {
       numOfRows: 200,
     }, serviceKey);
 
-    const existing = new Set<number>((cursor.excellent ?? []));
+    const existing = new Set<number>(cursor.excellent ?? []);
     fetched.list.forEach((row) => {
       const n = Number(row.pfctSn);
       if (Number.isFinite(n)) existing.add(n);
     });
     const reachedEnd = fetched.totalPages ? excellentPage >= fetched.totalPages : fetched.list.length < 200;
-    const now = new Date().toISOString();
+    const now = nowIso();
 
     await db.collection('jobs').doc(job.jobId).set({
       status: 'running',
@@ -248,6 +339,7 @@ async function processBaseline(job: JobDoc, serviceKey: string) {
         stage: reachedEnd ? 'finalize' : 'exfc5',
         excellentPage: reachedEnd ? 1 : excellentPage + 1,
         excellent: [...existing],
+        initialized: true,
       },
       updatedAt: now,
     }, { merge: true });
@@ -255,6 +347,7 @@ async function processBaseline(job: JobDoc, serviceKey: string) {
     await upsertBaselineMeta({
       status: 'running',
       baselineStatus: 'running',
+      baselineReady: false,
       baselineCurrentStage: 'exfc5',
       baselineCurrentInstallPlace: null,
       baselineCurrentPage: excellentPage,
@@ -271,35 +364,40 @@ async function processBaseline(job: JobDoc, serviceKey: string) {
   const facilitiesSnap = await db.collection('facilities').get();
   const sigunguMap = new Map<string, Set<string>>();
 
+  const writer = db.bulkWriter();
   let updatedExcellent = 0;
-  for (let i = 0; i < facilitiesSnap.docs.length; i += 400) {
-    const batch = db.batch();
-    facilitiesSnap.docs.slice(i, i + 400).forEach((doc) => {
-      const data = doc.data();
-      if (excellentSet.has(Number(data.pfctSn)) && !data.isExcellent) {
-        batch.set(doc.ref, { isExcellent: true, updatedAt: new Date().toISOString() }, { merge: true });
-        updatedExcellent += 1;
-      }
-      if (data.sido) {
-        if (!sigunguMap.has(data.sido as string)) sigunguMap.set(data.sido as string, new Set());
-        if (data.sigungu) sigunguMap.get(data.sido as string)?.add(String(data.sigungu));
-      }
-    });
-    await batch.commit();
-  }
+  facilitiesSnap.docs.forEach((doc) => {
+    const data = doc.data();
+    const shouldExcellent = excellentSet.has(Number(data.pfctSn));
+    if (shouldExcellent && !data.isExcellent) {
+      const patched = { ...data, isExcellent: true, updatedAt: nowIso() } as Record<string, unknown>;
+      patched.contentHash = computeFacilityHash(patched);
+      writer.set(doc.ref, patched, { merge: true });
+      updatedExcellent += 1;
+    }
 
+    if (data.sido) {
+      if (!sigunguMap.has(data.sido as string)) sigunguMap.set(data.sido as string, new Set());
+      if (data.sigungu) sigunguMap.get(data.sido as string)?.add(String(data.sigungu));
+    }
+  });
+  await writer.close();
+
+  const sigunguWriter = db.bulkWriter();
   for (const [sido, sigunguSet] of sigunguMap.entries()) {
-    await db.collection('sigunguIndex').doc(sido).set({
+    sigunguWriter.set(db.collection('sigunguIndex').doc(sido), {
       sido,
       sigungu: [...sigunguSet].sort(),
-      updatedAt: new Date().toISOString(),
+      updatedAt: nowIso(),
     }, { merge: true });
   }
+  await sigunguWriter.close();
 
-  const finishedAt = new Date().toISOString();
+  const finishedAt = nowIso();
   await upsertBaselineMeta({
     status: 'success',
     baselineStatus: 'success',
+    baselineReady: true,
     baselineSource: 'api-crawl',
     baselineCurrentStage: 'completed',
     baselineCurrentInstallPlace: null,
@@ -310,6 +408,8 @@ async function processBaseline(job: JobDoc, serviceKey: string) {
     done: true,
     lastBuildStatus: 'ok',
     lastBuiltAt: finishedAt,
+    lastSuccessfulBaselineAt: finishedAt,
+    baselineVersion: baselineMeta.baselineVersion ?? finishedAt,
     updatedAt: finishedAt,
     lastError: null,
     baselineLastError: null,
@@ -329,33 +429,46 @@ async function processBaseline(job: JobDoc, serviceKey: string) {
 
 async function loadRideTargets() {
   const snap = await db.collection('facilities').get();
-  const seen = new Set<string>();
-  const targets: number[] = [];
+  const coordinateWinner = new Map<string, number>();
+
   snap.docs.forEach((d) => {
     const x = d.data();
-    const key = x.lat && x.lng ? `${Number(x.lat).toFixed(6)}:${Number(x.lng).toFixed(6)}` : `pfct:${x.pfctSn}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      targets.push(Number(x.pfctSn));
-    }
+    const pfctSn = Number(x.pfctSn);
+    if (!Number.isFinite(pfctSn)) return;
+    const key = x.lat && x.lng ? `${Number(x.lat).toFixed(6)}:${Number(x.lng).toFixed(6)}` : `pfct:${pfctSn}`;
+    const existing = coordinateWinner.get(key);
+    if (!existing || pfctSn < existing) coordinateWinner.set(key, pfctSn);
   });
-  return targets;
+
+  return [...coordinateWinner.values()];
 }
 
-async function processRide(job: JobDoc, serviceKey: string) {
-  const now = new Date().toISOString();
+async function processRideStep(job: JobDoc, serviceKey: string) {
+  const now = nowIso();
   const targets = job.cursor?.targets ?? await loadRideTargets();
-  const offset = job.cursor?.offset ?? 0;
-  const batchTargets = targets.slice(offset, offset + 40);
-
+  let offset = job.cursor?.offset ?? 0;
+  let scanned = 0;
   let success = 0;
   let error = 0;
 
-  for (const pfctSn of batchTargets) {
+  const selected: number[] = [];
+  while (offset < targets.length && selected.length < RIDE_STEP_TARGETS) {
+    const pfctSn = targets[offset];
+    offset += 1;
+    scanned += 1;
+    const existing = await db.collection('rideCache').doc(String(pfctSn)).get();
+    if (existing.exists) {
+      continue;
+    }
+    selected.push(pfctSn);
+  }
+
+  const writer = db.bulkWriter();
+  for (const pfctSn of selected) {
     try {
       const fetched = await callApi('/ride4/getRideInfo4', { pfctSn }, serviceKey);
       const types = [...new Set(fetched.list.map((x) => String(x.playkndCd)).filter(Boolean))];
-      await db.collection('rideCache').doc(String(pfctSn)).set({
+      writer.set(db.collection('rideCache').doc(String(pfctSn)), {
         pfctSn,
         rawCount: fetched.list.length,
         filteredCount: fetched.list.length,
@@ -366,7 +479,7 @@ async function processRide(job: JobDoc, serviceKey: string) {
       }, { merge: true });
       success += 1;
     } catch (e) {
-      await db.collection('rideCache').doc(String(pfctSn)).set({
+      writer.set(db.collection('rideCache').doc(String(pfctSn)), {
         pfctSn,
         rawCount: 0,
         filteredCount: 0,
@@ -379,22 +492,24 @@ async function processRide(job: JobDoc, serviceKey: string) {
       error += 1;
     }
   }
+  await writer.close();
 
-  const processed = offset + batchTargets.length;
-  const done = processed >= targets.length;
+  const done = offset >= targets.length;
+  const prevScanned = job.cursor?.scannedTargets ?? 0;
 
   await db.collection('jobs').doc(job.jobId).set({
     status: done ? 'success' : 'running',
     currentStage: done ? 'completed' : 'ride-batch',
-    currentPage: processed,
+    currentPage: offset,
     totalPages: targets.length,
     pagesFetched: (job.pagesFetched ?? 0) + 1,
     successCount: (job.successCount ?? 0) + success,
     errorCount: (job.errorCount ?? 0) + error,
     cursor: {
       ...job.cursor,
-      offset: processed,
+      offset,
       targets,
+      scannedTargets: prevScanned + scanned,
     },
     updatedAt: now,
   }, { merge: true });
@@ -405,12 +520,11 @@ async function processRide(job: JobDoc, serviceKey: string) {
     rideStartedAt: job.startedAt ?? now,
     rideProgress: {
       totalTargets: targets.length,
-      processedTargets: processed,
+      processedTargets: offset,
       updatedTargets: (job.successCount ?? 0) + success,
       errorTargets: (job.errorCount ?? 0) + error,
-      skippedExistingTargets: 0,
+      skippedExistingTargets: Number((job.cursor?.scannedTargets ?? 0)) + scanned - ((job.successCount ?? 0) + success + (job.errorCount ?? 0) + error),
     },
-    ...(done ? { lastBuiltAt: now } : {}),
   });
 }
 
@@ -421,23 +535,24 @@ async function processOneJob() {
     .limit(1)
     .get();
 
-  if (snap.empty) {
-    return { processed: false };
-  }
+  if (snap.empty) return { processed: false };
 
   const doc = snap.docs[0];
   const job = { ...(doc.data() as JobDoc), jobId: doc.id };
 
   if (job.stopRequested) {
-    const now = new Date().toISOString();
+    const now = nowIso();
     await doc.ref.set({ status: 'stopped', updatedAt: now, currentStage: 'stopped' }, { merge: true });
-    if (job.type === 'baseline') await upsertBaselineMeta({ baselineStatus: 'stopped', status: 'stopped', updatedAt: now, baselineUpdatedAt: now, done: true });
-    if (job.type === 'ride') await upsertBaselineMeta({ rideStatus: 'stopped', rideUpdatedAt: now });
+    if (job.type === 'baseline') {
+      await upsertBaselineMeta({ baselineStatus: 'stopped', status: 'stopped', baselineReady: false, updatedAt: now, baselineUpdatedAt: now, done: true });
+    } else {
+      await upsertBaselineMeta({ rideStatus: 'stopped', rideUpdatedAt: now });
+    }
     return { processed: true, stopped: true, jobId: doc.id };
   }
 
   const secret = PUBLIC_DATA_SERVICE_KEY.value();
-  const now = new Date().toISOString();
+  const now = nowIso();
 
   if (job.status === 'queued') {
     await doc.ref.set({ status: 'running', currentStage: 'starting', updatedAt: now }, { merge: true });
@@ -445,6 +560,7 @@ async function processOneJob() {
       await upsertBaselineMeta({
         status: 'running',
         baselineStatus: 'running',
+        baselineReady: false,
         baselineSource: 'api-crawl',
         baselineStartedAt: job.startedAt ?? now,
         baselineUpdatedAt: now,
@@ -464,33 +580,39 @@ async function processOneJob() {
   }
 
   try {
-    if (job.type === 'baseline') await processBaseline(job, secret);
-    if (job.type === 'ride') await processRide(job, secret);
+    if (job.type === 'baseline') {
+      for (let i = 0; i < BASELINE_STEP_BUDGET; i += 1) {
+        const fresh = await db.collection('jobs').doc(job.jobId).get();
+        const freshJob = fresh.data() as JobDoc | undefined;
+        if (!freshJob || freshJob.status === 'success' || freshJob.status === 'stopped' || freshJob.status === 'error') break;
+        await processBaselineStep({ ...freshJob, jobId: job.jobId }, secret);
+      }
+    }
+
+    if (job.type === 'ride') await processRideStep(job, secret);
     return { processed: true, jobId: doc.id, type: job.type };
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : 'unknown error';
     await doc.ref.set({
       status: 'error',
       lastError: errMsg,
-      updatedAt: new Date().toISOString(),
+      updatedAt: nowIso(),
       errorCount: (job.errorCount ?? 0) + 1,
     }, { merge: true });
+
     if (job.type === 'baseline') {
       await upsertBaselineMeta({
         status: 'error',
         baselineStatus: 'error',
-        baselineUpdatedAt: new Date().toISOString(),
+        baselineReady: false,
+        baselineUpdatedAt: nowIso(),
         baselineLastError: errMsg,
         lastError: errMsg,
         done: true,
         lastBuildStatus: 'error',
       });
     } else {
-      await upsertBaselineMeta({
-        rideStatus: 'error',
-        rideUpdatedAt: new Date().toISOString(),
-        rideLastError: errMsg,
-      });
+      await upsertBaselineMeta({ rideStatus: 'error', rideUpdatedAt: nowIso(), rideLastError: errMsg });
     }
     throw error;
   }
