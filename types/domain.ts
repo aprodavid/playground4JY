@@ -172,6 +172,8 @@ export type CacheMetaDoc = {
   };
 };
 
+export type BaselineMeta = CacheMetaDoc;
+
 export type JobType = 'baseline' | 'ride';
 export type JobStatus = 'queued' | 'running' | 'success' | 'error' | 'stopped';
 

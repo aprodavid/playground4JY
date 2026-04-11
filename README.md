@@ -90,3 +90,14 @@ firebase deploy --only functions
 - 시/도 정적 목록은 유지합니다.
 - 시/군/구는 `sigunguIndex`를 즉시 조회합니다.
 - 서비스키는 raw -> encoded fallback 호출을 유지합니다.
+
+## 배포 순서 (루트 앱과 Functions 분리)
+1. PR 생성/리뷰 후 **main에 merge**
+2. merge 직후 **Vercel이 루트 Next.js 앱을 자동 배포**
+3. Vercel 배포 확인 후 로컬에서 아래 명령으로 **Functions만 별도 배포**
+   ```bash
+   cd functions
+   firebase deploy --only functions
+   ```
+
+> 운영 표준 흐름: **PR merge → Vercel 자동 배포 → `firebase deploy --only functions`**
