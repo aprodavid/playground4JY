@@ -136,14 +136,43 @@ export function normalizeFacility(raw: Record<string, unknown>, isExcellent: boo
 }
 
 export async function callApi(endpoint: string, params: Record<string, string | number>, key: string) {
-  const base = PUBLIC_DATA_BASE_URL.value().replace(/\/$/, '');
+  const baseRaw = PUBLIC_DATA_BASE_URL.value();
+  const base = String(baseRaw ?? '').trim().replace(/\/$/, '');
+  const serviceKey = String(key ?? '').trim();
+
+  if (!base) {
+    console.error('Missing Environment Variable: PUBLIC_DATA_BASE_URL is empty or undefined.', {
+      endpoint,
+      paramKeys: Object.keys(params),
+    });
+    throw new Error('Missing Environment Variable: PUBLIC_DATA_BASE_URL');
+  }
+
+  if (!serviceKey) {
+    console.error('Missing Environment Variable: PUBLIC_DATA_SERVICE_KEY is empty or undefined.', {
+      endpoint,
+      paramKeys: Object.keys(params),
+    });
+    throw new Error('Missing Environment Variable: PUBLIC_DATA_SERVICE_KEY');
+  }
+
   const attempts: string[] = [];
-  const keyCandidates = [key, encodeURIComponent(key)].filter((v, i, arr) => arr.indexOf(v) === i);
+  const keyCandidates = [serviceKey, encodeURIComponent(serviceKey)].filter((v, i, arr) => arr.indexOf(v) === i);
 
   let lastStatus = 0;
   let lastText = '';
   for (const candidate of keyCandidates) {
-    const url = new URL(`${base}${endpoint}`);
+    let url: URL;
+    try {
+      url = new URL(`${base}${endpoint}`);
+    } catch (error) {
+      console.error('Missing Environment Variable or Invalid URL configuration.', {
+        endpoint,
+        base,
+        error: error instanceof Error ? error.message : 'unknown error',
+      });
+      throw new Error(`Invalid PUBLIC_DATA_BASE_URL or endpoint: base="${base}" endpoint="${endpoint}"`);
+    }
     url.searchParams.set('serviceKey', candidate);
     url.searchParams.set('_type', 'json');
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
