@@ -1,11 +1,8 @@
-import { initializeApp } from 'firebase-admin/app';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { processOneJob } from './job-processor.js';
 import { PUBLIC_DATA_SERVICE_KEY } from './shared.js';
-
-initializeApp();
 
 export const workerTick = onSchedule({
   schedule: 'every 2 minutes',

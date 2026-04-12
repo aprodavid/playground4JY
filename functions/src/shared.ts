@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
+import { getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { defineSecret, defineString } from 'firebase-functions/params';
+
+if (!getApps().length) {
+  initializeApp();
+}
 
 export const db = getFirestore();
 
