@@ -11,13 +11,12 @@
 3. 프로젝트 선택: `firebase use <project-id>`
 
 ## 환경 구성
-- Parameter: `PUBLIC_DATA_BASE_URL`
+- Public Data API Base URL은 코드 상수(`BASE_URL`)로 관리
 - Secret: `PUBLIC_DATA_SERVICE_KEY`
 
 설정 예시:
 ```bash
 firebase functions:secrets:set PUBLIC_DATA_SERVICE_KEY
-# PUBLIC_DATA_BASE_URL 은 배포 시 파라미터로 입력
 ```
 
 ## 빌드/검증
