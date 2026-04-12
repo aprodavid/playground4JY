@@ -1,4 +1,5 @@
-import { callApi, db, nowIso, upsertBaselineMeta, RIDE_STEP_TARGETS, type JobDoc } from './shared.js';
+import { callApi, db, nowIso, RIDE_STEP_TARGETS, type JobDoc } from './shared.js';
+import { upsertBaselineMeta } from './firestore-repo.js';
 
 async function loadRideTargets() {
   const snap = await db.collection('facilities').get();
