@@ -10,7 +10,7 @@ if (!getApps().length) {
 export const db = getFirestore();
 
 export const PUBLIC_DATA_SERVICE_KEY = defineSecret('PUBLIC_DATA_SERVICE_KEY');
-export const BASE_URL = 'http://apis.data.go.kr/1741000/';
+export const BASE_URL = 'https://apis.data.go.kr/1741000/';
 export const INSTALL_PLACES = ['A003', 'A022', 'A033'] as const;
 export const BASELINE_STEP_BUDGET = 2;
 export const RIDE_STEP_TARGETS = 40;
