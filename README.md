@@ -86,6 +86,26 @@ npm run build
 firebase deploy --only functions
 ```
 
+
+## Firestore 인덱스 운영 가이드
+운영 중 `The query requires an index` 오류를 줄이기 위해 저장소 루트의 `firestore.indexes.json`을 함께 관리합니다.
+
+### 왜 필요한가
+코드에서 사용하는 Firestore 쿼리 중 일부(`where + orderBy` 조합)는 단일 필드 자동 인덱스로는 처리되지 않아 composite index가 필요합니다.  
+특히 `jobs` 컬렉션의 작업 조회 쿼리(상태 큐 처리, 타입별 최신 작업 조회)는 사전 인덱스가 없으면 런타임 오류가 발생할 수 있습니다.
+
+### 배포 방법
+```bash
+firebase deploy --only firestore:indexes
+```
+
+루트 `firebase.json`에 아래 설정이 포함되어 있으므로, 위 명령이 `firestore.indexes.json`을 기준으로 인덱스를 배포합니다.
+
+### 새 쿼리 추가 시 규칙
+- Firestore 쿼리에 `where + orderBy` 또는 다중 `where` 조합을 추가하면, 필요한 인덱스를 먼저 확인합니다.
+- 필요한 인덱스는 반드시 `firestore.indexes.json`에 반영한 뒤 코드와 함께 배포합니다.
+- 운영 패널/워크커에서 사용하는 쿼리도 동일 기준으로 관리합니다.
+
 ## 참고
 - 시/도 정적 목록은 유지합니다.
 - 시/군/구는 `sigunguIndex`를 즉시 조회합니다.

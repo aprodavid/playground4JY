@@ -18,14 +18,13 @@
   area: number;         // 결측은 400 대체
   areaMissing: boolean; // true면 결측 대체
   isExcellent: boolean; // exfc5 결합
+  contentHash?: string;
   updatedAt: string;    // ISO
 }
 ```
 
 권장 인덱스:
-- `sido` Asc
-- `sido` Asc + `sigungu` Asc
-- `sido` Asc + `sigungu` Asc + `installPlaceCode` Asc
+- 단일 필드 인덱스(자동)로 현재 조회 쿼리 처리 가능
 
 ## rideCache
 문서 ID: `pfctSn`(string)
@@ -56,3 +55,22 @@
   lastBuildStatus: 'ok'|'error';
 }
 ```
+
+
+## jobs
+문서 ID: `jobId`(auto id)
+
+```ts
+{
+  jobId: string;
+  type: "baseline"|"ride";
+  status: "queued"|"running"|"success"|"error"|"stopped";
+  startedAt: string;
+  updatedAt: string;
+  ...
+}
+```
+
+필수 composite index:
+- `status` Asc + `startedAt` Asc (`where status in [...] + orderBy startedAt asc`)
+- `type` Asc + `startedAt` Desc (`where type == ... + orderBy startedAt desc`)
