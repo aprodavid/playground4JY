@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
-import { defineSecret, defineString } from 'firebase-functions/params';
+import { defineSecret } from 'firebase-functions/params';
 
 if (!getApps().length) {
   initializeApp();
@@ -9,8 +9,8 @@ if (!getApps().length) {
 
 export const db = getFirestore();
 
-export const PUBLIC_DATA_BASE_URL = defineString('PUBLIC_DATA_BASE_URL');
 export const PUBLIC_DATA_SERVICE_KEY = defineSecret('PUBLIC_DATA_SERVICE_KEY');
+export const BASE_URL = 'http://apis.data.go.kr/1741000/';
 export const INSTALL_PLACES = ['A003', 'A022', 'A033'] as const;
 export const BASELINE_STEP_BUDGET = 2;
 export const RIDE_STEP_TARGETS = 40;
@@ -140,16 +140,17 @@ export function normalizeFacility(raw: Record<string, unknown>, isExcellent: boo
 }
 
 export async function callApi(endpoint: string, params: Record<string, string | number>, key: string) {
-  const baseRaw = PUBLIC_DATA_BASE_URL.value();
-  const base = String(baseRaw ?? '').trim().replace(/\/$/, '');
+  const base = BASE_URL;
+  const normalizedBase = String(base ?? '').trim().replace(/\/+$/, '/');
+  const normalizedEndpoint = String(endpoint ?? '').trim().replace(/^\/+/, '');
   const serviceKey = String(key ?? '').trim();
 
-  if (!base) {
-    console.error('Missing Environment Variable: PUBLIC_DATA_BASE_URL is empty or undefined.', {
+  if (!normalizedBase) {
+    console.error('Invalid BASE_URL: BASE_URL is empty or undefined.', {
       endpoint,
       paramKeys: Object.keys(params),
     });
-    throw new Error('Missing Environment Variable: PUBLIC_DATA_BASE_URL');
+    throw new Error('Invalid BASE_URL');
   }
 
   if (!serviceKey) {
@@ -168,14 +169,15 @@ export async function callApi(endpoint: string, params: Record<string, string | 
   for (const candidate of keyCandidates) {
     let url: URL;
     try {
-      url = new URL(`${base}${endpoint}`);
+      url = new URL(normalizedEndpoint, normalizedBase);
     } catch (error) {
-      console.error('Missing Environment Variable or Invalid URL configuration.', {
+      console.error('Invalid URL configuration.', {
         endpoint,
-        base,
+        base: normalizedBase,
+        normalizedEndpoint,
         error: error instanceof Error ? error.message : 'unknown error',
       });
-      throw new Error(`Invalid PUBLIC_DATA_BASE_URL or endpoint: base="${base}" endpoint="${endpoint}"`);
+      throw new Error(`Invalid BASE_URL or endpoint: base="${normalizedBase}" endpoint="${endpoint}"`);
     }
     url.searchParams.set('serviceKey', candidate);
     url.searchParams.set('_type', 'json');
