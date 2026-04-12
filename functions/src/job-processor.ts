@@ -1,6 +1,7 @@
 import { processBaselineStep } from './baseline.js';
 import { processRideStep } from './ride.js';
-import { BASELINE_STEP_BUDGET, PUBLIC_DATA_SERVICE_KEY, db, nowIso, upsertBaselineMeta, type JobDoc } from './shared.js';
+import { BASELINE_STEP_BUDGET, PUBLIC_DATA_SERVICE_KEY, db, nowIso, type JobDoc } from './shared.js';
+import { upsertBaselineMeta } from './firestore-repo.js';
 
 export async function processOneJob() {
   const snap = await db.collection('jobs')

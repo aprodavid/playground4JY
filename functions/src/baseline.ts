@@ -1,5 +1,4 @@
 import {
-  BASELINE_META_KEY,
   INSTALL_PLACES,
   callApi,
   clearCollection,
@@ -7,11 +6,11 @@ import {
   db,
   normalizeFacility,
   nowIso,
-  upsertBaselineMeta,
   upsertFacilitiesWithDiff,
   type JobDoc,
   type NormalizedFacility,
 } from './shared.js';
+import { BASELINE_META_KEY, upsertBaselineMeta } from './firestore-repo.js';
 
 export async function processBaselineStep(job: JobDoc, serviceKey: string) {
   const cursor = job.cursor ?? {};

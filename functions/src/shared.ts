@@ -6,7 +6,6 @@ export const db = getFirestore();
 
 export const PUBLIC_DATA_BASE_URL = defineString('PUBLIC_DATA_BASE_URL');
 export const PUBLIC_DATA_SERVICE_KEY = defineSecret('PUBLIC_DATA_SERVICE_KEY');
-export const BASELINE_META_KEY = 'baseline:global';
 export const INSTALL_PLACES = ['A003', 'A022', 'A033'] as const;
 export const BASELINE_STEP_BUDGET = 2;
 export const RIDE_STEP_TARGETS = 40;
@@ -199,13 +198,6 @@ export async function callApi(endpoint: string, params: Record<string, string | 
   }
 
   throw new Error(`public api failed ${endpoint} status=${lastStatus} attempts=${attempts.join(',')} detail=${lastText.slice(0, 300)}`);
-}
-
-export async function upsertBaselineMeta(patch: Record<string, unknown>) {
-  await db.collection('cacheMeta').doc(BASELINE_META_KEY).set({
-    regionKey: BASELINE_META_KEY,
-    ...patch,
-  }, { merge: true });
 }
 
 export async function clearCollection(name: string) {
