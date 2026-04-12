@@ -25,7 +25,15 @@ export async function processOneJob() {
     return { processed: true, stopped: true, jobId: doc.id };
   }
 
-  const secret = PUBLIC_DATA_SERVICE_KEY.value();
+  let secret = '';
+  try {
+    secret = PUBLIC_DATA_SERVICE_KEY.value();
+  } catch (error) {
+    console.error('Missing Environment Variable: PUBLIC_DATA_SERVICE_KEY could not be resolved.', {
+      error: error instanceof Error ? error.message : 'unknown error',
+    });
+    throw new Error('Missing Environment Variable: PUBLIC_DATA_SERVICE_KEY');
+  }
   const now = nowIso();
 
   if (job.status === 'queued') {
