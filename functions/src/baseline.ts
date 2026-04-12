@@ -10,7 +10,7 @@ import {
   type JobDoc,
   type NormalizedFacility,
 } from './shared.js';
-import { BASELINE_META_KEY, upsertBaselineMeta } from './firestore-repo.js';
+import { BASELINE_META_KEY, upsertBaselineMeta } from './lib/firestore-repo.js';
 
 export async function processBaselineStep(job: JobDoc, serviceKey: string) {
   const cursor = job.cursor ?? {};

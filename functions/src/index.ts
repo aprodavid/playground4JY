@@ -30,3 +30,6 @@ export const onJobCreatedKick = onDocumentCreated({
 }, async () => {
   await processOneJob();
 });
+
+export { BASELINE_META_KEY, upsertBaselineMeta } from './lib/firestore-repo.js';
+export type { CacheMetaDoc, JobDoc } from './types/domain.js';
