@@ -1,4 +1,3 @@
-import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { processOneJob } from './job-processor.js';
@@ -19,14 +18,3 @@ export const workerKick = onRequest({
   const result = await processOneJob();
   res.status(200).json(result);
 });
-
-export const onJobCreatedKick = onDocumentCreated({
-  document: 'jobs/{jobId}',
-  region: 'asia-northeast3',
-  secrets: [PUBLIC_DATA_SERVICE_KEY],
-}, async () => {
-  await processOneJob();
-});
-
-export { BASELINE_META_KEY, upsertBaselineMeta } from './lib/firestore-repo.js';
-export type { CacheMetaDoc, JobDoc } from './types/domain.js';

@@ -1,9 +1,10 @@
 import { z } from 'zod';
-import { BASELINE_META_KEY, createJob, getCacheMeta, getLatestJob, setCacheMeta } from '@/lib/firestore-repo';
+import { baselineMetaKey, RIDE_META_KEY, setCacheMeta } from '@/lib/firestore-repo';
 import { jsonError, jsonOk, parseJsonBody } from '@/lib/admin-json';
 
 const schema = z.object({
   type: z.enum(['baseline', 'ride']),
+  sido: z.string().min(1).optional(),
   mode: z.enum(['normal', 'force-rebuild']).optional(),
 });
 
@@ -18,49 +19,48 @@ export async function POST(req: Request) {
 
     const { type } = parsed.data;
     const mode = parsed.data.mode ?? 'normal';
-    const running = await getLatestJob(type);
-    if (running && (running.status === 'queued' || running.status === 'running')) {
-      return jsonOk({ message: 'already running', job: running }, 409);
-    }
-
-    const baselineMeta = await getCacheMeta(BASELINE_META_KEY);
-    if (type === 'baseline' && mode !== 'force-rebuild' && baselineMeta?.baselineReady && baselineMeta?.baselineStatus === 'success') {
-      return jsonOk({
-        message: 'baseline already ready; reuse enabled',
-        skipped: true,
-        baselineMeta,
-      }, 200);
-    }
-
-    const job = await createJob(type);
     const now = new Date().toISOString();
+
     if (type === 'baseline') {
-      await setCacheMeta(BASELINE_META_KEY, {
-        regionKey: BASELINE_META_KEY,
-        status: 'running',
-        baselineStatus: 'running',
+      const sido = parsed.data.sido;
+      if (!sido) return jsonError('sido is required for baseline', { status: 400 });
+
+      const key = baselineMetaKey(sido);
+      await setCacheMeta(key, {
+        regionKey: key,
+        sido,
+        status: 'queued',
         baselineReady: false,
-        baselineCurrentStage: 'queued',
-        baselineStartedAt: job.startedAt ?? now,
-        baselineUpdatedAt: now,
-        baselineVersion: mode === 'force-rebuild' ? now : (baselineMeta?.baselineVersion ?? now),
         baselineBuildMode: mode,
-        lastSuccessfulBaselineAt: baselineMeta?.lastSuccessfulBaselineAt,
-        done: false,
+        stopRequested: false,
+        currentStage: 'queued',
+        currentInstallPlace: null,
+        currentPage: 1,
+        totalPages: null,
+        pagesFetched: 0,
+        rawFacilityCount: 0,
+        filteredFacilityCount: 0,
+        lastPageItemCount: 0,
+        parsePathUsed: '',
+        consecutiveZeroItemPages: 0,
+        lastError: null,
+        lastStartedAt: now,
+        runRequestedAt: now,
+        updatedAt: now,
       });
-    } else {
-      await setCacheMeta(BASELINE_META_KEY, {
-        regionKey: BASELINE_META_KEY,
-        rideStatus: 'running',
-        rideStartedAt: job.startedAt ?? now,
-        rideUpdatedAt: now,
-      });
+
+      return jsonOk({ message: `${sido} baseline queued` }, 201);
     }
 
-    return jsonOk({
-      message: `${type} job queued. Firebase Functions will process it in background.`,
-      job,
-    }, 201);
+    await setCacheMeta(RIDE_META_KEY, {
+      regionKey: RIDE_META_KEY,
+      status: 'queued',
+      stopRequested: false,
+      runRequestedAt: now,
+      lastError: null,
+      updatedAt: now,
+    });
+    return jsonOk({ message: 'ride cache update queued' }, 201);
   } catch (error) {
     return jsonError('start job failed', { status: 500, detailMessage: error instanceof Error ? error.message : 'unknown error' });
   }
