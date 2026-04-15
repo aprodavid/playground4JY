@@ -53,3 +53,23 @@ npm install
 npm run lint
 npm run build
 ```
+
+## Firestore 인덱스 (필수)
+현재 워커/검색 쿼리에 필요한 composite index는 아래 2개입니다.
+
+- `facilities` (`queryScope: COLLECTION`)
+  - `sido` ASC
+  - `sigungu` ASC
+- `cacheMeta` (`queryScope: COLLECTION`)
+  - `status` ASC
+  - `regionKey` ASC
+
+반영 순서:
+```bash
+firebase.cmd deploy --only "firestore"
+```
+
+그 다음 Functions를 배포합니다.
+```bash
+firebase deploy --only functions
+```
