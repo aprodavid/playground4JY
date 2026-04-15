@@ -2,9 +2,8 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { INSTALL_PLACE_CODES } from '@/src/config/installPlaces';
 import { DEFAULT_WEIGHTS } from '@/src/config/uiDefaults';
-import { BASELINE_META_KEY } from '@/src/config/firestore';
 import { isMissingEnvError } from '@/lib/env';
-import { getCacheMeta, getFacilitiesByRegion, getRideCaches } from '@/lib/firestore-repo';
+import { getBaselineMeta, getFacilitiesByRegion, getRideCaches } from '@/lib/firestore-repo';
 import { scoreFacility } from '@/lib/scoring';
 
 const schema = z.object({
@@ -29,29 +28,33 @@ export async function POST(req: Request) {
     if (!parsed.success) return NextResponse.json({ errors: parsed.error.flatten() }, { status: 400 });
     const { sido, sigungu, installPlaces, installYearFrom, topN, weights } = parsed.data;
 
-    const baselineMeta = await getCacheMeta(BASELINE_META_KEY);
-    if (!baselineMeta || !baselineMeta.baselineReady || baselineMeta.baselineStatus !== 'success') {
-      const reason = baselineMeta?.baselineStatus === 'running' ? 'baseline-progressing' : 'baseline-not-ready';
+    const baselineMeta = await getBaselineMeta(sido);
+    if (!baselineMeta || !baselineMeta.baselineReady || baselineMeta.status !== 'success') {
       return NextResponse.json({
         summary: { totalCandidates: 0, recommended: 0 },
-        excellentSection: [], top: [], nearMiss: [],
-        emptyReason: reason,
+        excellentFacilities: [],
+        topResults: [],
+        nearMissResults: [],
+        emptyReason: baselineMeta?.status === 'running' ? 'baseline-progressing' : 'baseline-not-ready',
         needsCacheBuild: true,
-        message: 'baseline 캐시가 준비되지 않았습니다. 운영 패널에서 기준선 캐시 생성/완료 후 다시 검색해주세요.',
+        message: '해당 시도의 기준선 캐시가 필요합니다. 운영 패널에서 선택 시도를 기준으로 baseline을 생성해주세요.',
       }, { status: 409 });
     }
 
     const regional = await getFacilitiesByRegion(sido, sigungu);
-    if (!regional.length) {
-      return NextResponse.json({ summary: { totalCandidates: 0, recommended: 0 }, excellentSection: [], top: [], nearMiss: [], emptyReason: sigungu ? 'sigungu-match-zero' : 'sido-match-zero', message: '선택한 지역 조건에 맞는 baseline 시설이 없습니다.' });
-    }
-
     const facilities = regional
       .filter((f) => installPlaces.includes(f.installPlaceCode))
       .filter((f) => (installYearFrom ? (f.installYear ?? 0) >= installYearFrom : true));
 
     if (!facilities.length) {
-      return NextResponse.json({ summary: { totalCandidates: 0, recommended: 0 }, excellentSection: [], top: [], nearMiss: [], emptyReason: 'sigungu-field-missing', message: '기준선은 있으나 필터 조건(설치장소/설치연도)에 맞는 시설이 없습니다.' });
+      return NextResponse.json({
+        summary: { totalCandidates: 0, recommended: 0 },
+        excellentFacilities: [],
+        topResults: [],
+        nearMissResults: [],
+        emptyReason: 'filter-match-zero',
+        message: '선택한 조건과 일치하는 baseline 시설이 없습니다.',
+      });
     }
 
     const rideCached = await getRideCaches(facilities.map((f) => f.pfctSn));
@@ -64,9 +67,9 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       summary: { totalCandidates: scored.length, recommended: scored.filter((x) => x.recommended).length },
-      excellentSection: scored.filter((x) => x.isExcellent).slice(0, 20),
-      top: scored.slice(0, topN),
-      nearMiss: scored.slice(topN, topN + 5),
+      excellentFacilities: scored.filter((x) => x.isExcellent).slice(0, 20),
+      topResults: scored.slice(0, topN),
+      nearMissResults: scored.slice(topN, topN + 5),
       needsCacheBuild: false,
     });
   } catch (error) {

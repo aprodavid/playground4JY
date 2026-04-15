@@ -1,31 +1,11 @@
 {
   "indexes": [
     {
-      "collectionGroup": "jobs",
+      "collectionGroup": "facilities",
       "queryScope": "COLLECTION",
       "fields": [
-        {
-          "fieldPath": "status",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "startedAt",
-          "order": "ASCENDING"
-        }
-      ]
-    },
-    {
-      "collectionGroup": "jobs",
-      "queryScope": "COLLECTION",
-      "fields": [
-        {
-          "fieldPath": "type",
-          "order": "ASCENDING"
-        },
-        {
-          "fieldPath": "startedAt",
-          "order": "DESCENDING"
-        }
+        { "fieldPath": "sido", "order": "ASCENDING" },
+        { "fieldPath": "sigungu", "order": "ASCENDING" }
       ]
     }
   ],

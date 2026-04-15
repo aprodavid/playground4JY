@@ -1,38 +1,39 @@
-import { NextResponse } from 'next/server';
-import { BASELINE_META_KEY } from '@/src/config/firestore';
-import { getCacheMeta, getCollectionCounts, getLatestJob } from '@/lib/firestore-repo';
+import { NextRequest, NextResponse } from 'next/server';
+import { getBaselineMeta, getCollectionCounts, getRideMeta } from '@/lib/firestore-repo';
 
 export const runtime = 'nodejs';
 
-export async function GET() {
-  const [baselineMeta, baselineJob, rideJob, counts] = await Promise.all([
-    getCacheMeta(BASELINE_META_KEY),
-    getLatestJob('baseline'),
-    getLatestJob('ride'),
+export async function GET(req: NextRequest) {
+  const sido = req.nextUrl.searchParams.get('sido') ?? '서울특별시';
+  const [baselineMeta, rideMeta, counts] = await Promise.all([
+    getBaselineMeta(sido),
+    getRideMeta(),
     getCollectionCounts(),
   ]);
 
   return NextResponse.json({
-    baseline: {
-      status: baselineMeta?.baselineStatus ?? 'idle',
-      ready: baselineMeta?.baselineReady ?? false,
-      lastSuccessfulBaselineAt: baselineMeta?.lastSuccessfulBaselineAt ?? null,
-      currentStage: baselineMeta?.baselineCurrentStage ?? null,
-    },
-    ride: {
-      status: baselineMeta?.rideStatus ?? 'idle',
-      progress: baselineMeta?.rideProgress ?? null,
-    },
-    cacheCounts: {
-      facilities: counts.facilities,
-      rideCache: counts.rideCache,
-      sigunguIndex: counts.sigunguIndex,
-      cacheMeta: counts.cacheMeta,
-    },
-    sigunguIndexCount: counts.sigunguIndex,
-    latestJobs: { baseline: baselineJob, ride: rideJob },
-    baselineMeta,
-    jobs: { baseline: baselineJob, ride: rideJob },
-    counts,
+    selectedSido: sido,
+    baseline: baselineMeta ? {
+      status: baselineMeta.status,
+      ready: baselineMeta.baselineReady,
+      currentStage: baselineMeta.currentStage,
+      currentInstallPlace: baselineMeta.currentInstallPlace,
+      currentPage: baselineMeta.currentPage,
+      totalPages: baselineMeta.totalPages,
+      pagesFetched: baselineMeta.pagesFetched,
+      rawFacilityCount: baselineMeta.rawFacilityCount,
+      filteredFacilityCount: baselineMeta.filteredFacilityCount,
+      lastPageItemCount: baselineMeta.lastPageItemCount,
+      parsePathUsed: baselineMeta.parsePathUsed,
+      lastError: baselineMeta.lastError,
+      lastSuccessfulBaselineAt: baselineMeta.lastSuccessfulBaselineAt ?? null,
+    } : null,
+    ride: rideMeta ? {
+      status: rideMeta.status,
+      progress: rideMeta.progress,
+      lastError: rideMeta.lastError,
+      lastSuccessfulAt: rideMeta.lastSuccessfulAt ?? null,
+    } : null,
+    cacheCounts: counts,
   });
 }

@@ -1,11 +1,18 @@
-import { callApi, db, nowIso, RIDE_STEP_TARGETS, RIDE_URL, type JobDoc } from './shared.js';
-import { upsertBaselineMeta } from './lib/firestore-repo.js';
+import { callApi, db, nowIso, RIDE_URL, RIDE_WHITELIST } from './shared.js';
 
-async function loadRideTargets() {
-  const snap = await db.collection('facilities').get();
+export async function runRideUpdater(serviceKey: string) {
+  const metaRef = db.collection('cacheMeta').doc('ride:global');
+  const metaSnap = await metaRef.get();
+  const meta = (metaSnap.data() ?? {}) as { stopRequested?: boolean; progress?: Record<string, number> };
+
+  if (meta.stopRequested) {
+    await metaRef.set({ status: 'stopped', updatedAt: nowIso() }, { merge: true });
+    return { stopped: true };
+  }
+
+  const facilities = await db.collection('facilities').get();
   const coordinateWinner = new Map<string, string>();
-
-  snap.docs.forEach((d) => {
+  facilities.docs.forEach((d) => {
     const x = d.data();
     const pfctSn = String(x.pfctSn ?? '').trim();
     if (!pfctSn) return;
@@ -13,67 +20,46 @@ async function loadRideTargets() {
     const existing = coordinateWinner.get(key);
     if (!existing || pfctSn.localeCompare(existing) < 0) coordinateWinner.set(key, pfctSn);
   });
+  const targets = [...coordinateWinner.values()];
 
-  return [...coordinateWinner.values()];
-}
-
-export async function processRideStep(job: JobDoc, serviceKey: string) {
-  const now = nowIso();
-  const targets = (job.cursor?.targets as string[] | undefined) ?? await loadRideTargets();
-  let offset = Number(job.cursor?.offset ?? 0);
-  let scanned = 0;
-  let success = 0;
-  let error = 0;
-
-  const selected: string[] = [];
-  while (offset < targets.length && selected.length < RIDE_STEP_TARGETS) {
-    const pfctSn = targets[offset];
-    offset += 1;
-    scanned += 1;
-    const existing = await db.collection('rideCache').doc(pfctSn).get();
-    if (existing.exists) continue;
-    selected.push(pfctSn);
-  }
-
+  let processed = 0;
+  let updated = 0;
+  let errored = 0;
+  let skipped = 0;
   const writer = db.bulkWriter();
-  for (const pfctSn of selected) {
+
+  for (const pfctSn of targets) {
+    processed += 1;
+    const existing = await db.collection('rideCache').doc(pfctSn).get();
+    if (existing.exists) { skipped += 1; continue; }
+
     try {
       const fetched = await callApi(RIDE_URL, { pfctSn }, serviceKey);
-      const types = [...new Set(fetched.list.map((x) => String(x.playkndCd)).filter(Boolean))];
-      writer.set(db.collection('rideCache').doc(pfctSn), { pfctSn, rawCount: fetched.list.length, filteredCount: fetched.list.length, typeCount: types.length, types, status: fetched.list.length ? 'ok' : 'empty', updatedAt: now }, { merge: true });
-      success += 1;
-    } catch (e) {
-      writer.set(db.collection('rideCache').doc(pfctSn), { pfctSn, rawCount: 0, filteredCount: 0, typeCount: 0, types: [], status: 'error', updatedAt: now, lastError: e instanceof Error ? e.message : 'unknown error' }, { merge: true });
-      error += 1;
+      const types = [...new Set(fetched.list.map((x) => String(x.playkndCd ?? '')).filter((code) => RIDE_WHITELIST.has(code)))];
+      writer.set(db.collection('rideCache').doc(pfctSn), { pfctSn, rawCount: fetched.list.length, filteredCount: fetched.list.length, typeCount: types.length, types, status: fetched.list.length ? 'ok' : 'empty', updatedAt: nowIso() }, { merge: true });
+      updated += 1;
+    } catch (error) {
+      writer.set(db.collection('rideCache').doc(pfctSn), { pfctSn, rawCount: 0, filteredCount: 0, typeCount: 0, types: [], status: 'error', updatedAt: nowIso(), lastError: error instanceof Error ? error.message : 'unknown error' }, { merge: true });
+      errored += 1;
     }
   }
+
   await writer.close();
-
-  const done = offset >= targets.length;
-  const prevScanned = Number(job.cursor?.scannedTargets ?? 0);
-
-  await db.collection('jobs').doc(job.jobId).set({
-    status: done ? 'success' : 'running',
-    currentStage: done ? 'success' : 'ride',
-    currentPage: offset,
-    totalPages: targets.length,
-    pagesFetched: (job.pagesFetched ?? 0) + 1,
-    successCount: (job.successCount ?? 0) + success,
-    errorCount: (job.errorCount ?? 0) + error,
-    cursor: { ...job.cursor, offset, targets, scannedTargets: prevScanned + scanned },
-    updatedAt: now,
+  await metaRef.set({
+    regionKey: 'ride:global',
+    status: 'success',
+    stopRequested: false,
+    updatedAt: nowIso(),
+    lastSuccessfulAt: nowIso(),
+    lastError: null,
+    progress: {
+      totalTargets: targets.length,
+      processedTargets: processed,
+      updatedTargets: updated,
+      errorTargets: errored,
+      skippedExistingTargets: skipped,
+    },
   }, { merge: true });
 
-  await upsertBaselineMeta({
-    rideStatus: done ? 'success' : 'running',
-    rideUpdatedAt: now,
-    rideStartedAt: job.startedAt ?? now,
-    rideProgress: {
-      totalTargets: targets.length,
-      processedTargets: offset,
-      updatedTargets: (job.successCount ?? 0) + success,
-      errorTargets: (job.errorCount ?? 0) + error,
-      skippedExistingTargets: prevScanned + scanned - ((job.successCount ?? 0) + success + (job.errorCount ?? 0) + error),
-    },
-  });
+  return { success: true, totalTargets: targets.length };
 }
