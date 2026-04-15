@@ -105,9 +105,9 @@ function getField(raw: Record<string, unknown>, aliases: string[]) {
 }
 
 export function extractRegionFromRaw(raw: Record<string, unknown>) {
-  const address = parseText(getField(raw, ['rdnmadr', 'lnmadr', 'addr', 'detailAddr', 'address', '소재지도로명주소', '소재지지번주소'])) ?? '';
+  const address = parseText(getField(raw, ['rdnmadr', 'lnmadr', 'ronaAddr', 'addr', 'detailAddr', 'address', '소재지도로명주소', '소재지지번주소'])) ?? '';
 
-  const explicitSido = parseText(getField(raw, ['sido', '시도', 'ctprvnNm', 'ctprvnNmCdNm', 'rgnNm', 'region']));
+  const explicitSido = parseText(getField(raw, ['sidoNm', 'sido', '시도', 'ctprvnNm', 'ctprvnNmCdNm', 'rgnNm', 'region']));
   const explicitSigungu = parseText(getField(raw, ['sigungu', '시군구', 'signguNm', 'sigunguNm', 'sggNm', 'signguNmCdNm', 'district', 'county']));
 
   const sidoCandidate = explicitSido ?? firstAddressToken(address) ?? '';
@@ -124,9 +124,11 @@ export function extractRegionFromRaw(raw: Record<string, unknown>) {
 
 export function matchesSelectedRegion(raw: Record<string, unknown>, sido: string, sigungu?: string): boolean {
   const region = extractRegionFromRaw(raw);
-  if (!region.sido || !normalizeSido(sido)) return false;
-  if (normalizeSido(region.sido) !== normalizeSido(sido)) return false;
-  if (sigungu && normalizeSigungu(region.sigungu) !== normalizeSigungu(sigungu)) return false;
+  const normalizedSelectedSido = normalizeSido(sido).replace(/\s+/g, '');
+  const normalizedExtractedSido = normalizeSido(region.sido).replace(/\s+/g, '');
+  if (!normalizedExtractedSido || !normalizedSelectedSido) return false;
+  if (normalizedExtractedSido !== normalizedSelectedSido) return false;
+  if (sigungu && normalizeSigungu(region.sigungu).replace(/\s+/g, '') !== normalizeSigungu(sigungu).replace(/\s+/g, '')) return false;
   return true;
 }
 

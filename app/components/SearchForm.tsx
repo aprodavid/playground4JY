@@ -22,12 +22,19 @@ type DebugStatus = {
     currentStage: string;
     currentInstallPlace: string | null;
     currentPage: number;
-    totalPages: number | null;
+    totalPagesCurrentInstallPlace: number | null;
+    totalPagesOverall: number | null;
     pagesFetched: number;
     rawFacilityCount: number;
     filteredFacilityCount: number;
     lastPageItemCount: number;
     parsePathUsed: string;
+    parserDebugVersion: string | null;
+    installPlaceFilterMode: string | null;
+    installPlaceApiReliable: boolean | null;
+    lastPageUniqueInstallPlaces: string[];
+    lastPageSampleSidos: string[];
+    lastPageFilterReasonCounts: Record<string, number>;
     lastError: string | null;
     lastSuccessfulBaselineAt: string | null;
   } | null;
@@ -100,11 +107,11 @@ export default function SearchForm() {
   useEffect(() => { if (sido) loadSigungu(sido); }, [loadSigungu, sido]);
 
   const baselineProgress = useMemo(() => {
-    const totalPages = status?.baseline?.totalPages ?? 0;
+    const totalPages = status?.baseline?.totalPagesOverall ?? status?.baseline?.totalPagesCurrentInstallPlace ?? 0;
     const pagesFetched = status?.baseline?.pagesFetched ?? 0;
     if (!totalPages || totalPages <= 0) return 0;
     return Math.max(0, Math.min(100, Math.round((pagesFetched / totalPages) * 100)));
-  }, [status?.baseline?.pagesFetched, status?.baseline?.totalPages]);
+  }, [status?.baseline?.pagesFetched, status?.baseline?.totalPagesCurrentInstallPlace, status?.baseline?.totalPagesOverall]);
 
   const rideProgress = useMemo(() => {
     const totalTargets = status?.ride?.progress?.totalTargets ?? 0;
@@ -176,7 +183,24 @@ export default function SearchForm() {
 
     <section className="rounded-xl bg-white p-4 shadow"><h2 className="mb-3 text-lg font-bold">운영 패널</h2>
       <div className="flex flex-wrap gap-2"><button onClick={() => runAdminAction('baseline')} disabled={runningAdminAction !== '' || !sido} className="rounded bg-blue-700 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-400">기준선 캐시 생성 (선택 시도)</button><button onClick={() => runAdminAction('baseline-force')} disabled={runningAdminAction !== '' || !sido} className="rounded bg-sky-800 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-400">기준선 강제 재생성 (선택 시도)</button><button onClick={() => runAdminAction('ride')} disabled={runningAdminAction !== ''} className="rounded bg-indigo-700 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-400">ride 캐시 갱신</button><button onClick={() => refreshStatus()} disabled={loadingStatus || !sido} className="rounded border px-3 py-2 text-sm">상태 새로고침</button><button onClick={() => runAdminAction('stop')} disabled={runningAdminAction !== ''} className="rounded bg-rose-700 px-3 py-2 text-sm font-semibold text-white disabled:bg-slate-400">작업 중지</button></div>
-      <div className="mt-3 rounded border bg-slate-50 p-3 text-xs space-y-2"><p>선택 시도: {sido || '-'}</p><p>Baseline 상태: {status?.baseline?.status ?? 'idle'} / ready: {status?.baseline?.ready ? 'yes' : 'no'}</p><p>Baseline 마지막 성공 시각: {status?.baseline?.lastSuccessfulBaselineAt ?? '-'}</p><p>Baseline stage/place/page: {status?.baseline?.currentStage ?? '-'} / {status?.baseline?.currentInstallPlace ?? '-'} / {status?.baseline?.currentPage ?? '-'} / {status?.baseline?.totalPages ?? '-'}</p><p>Baseline pages/raw/filtered: {status?.baseline?.pagesFetched ?? 0} / {status?.baseline?.rawFacilityCount ?? 0} / {status?.baseline?.filteredFacilityCount ?? 0}</p><p>Baseline lastPageItemCount/parsePathUsed: {status?.baseline?.lastPageItemCount ?? 0} / {status?.baseline?.parsePathUsed ?? '-'}</p><p>Baseline lastError: {status?.baseline?.lastError ?? '-'}</p><div className="mt-1 mb-1 h-3 w-full overflow-hidden rounded bg-slate-200"><div className="h-full bg-blue-600" style={{ width: `${baselineProgress}%` }} /></div><p>Baseline 진행률: {baselineProgress}%</p><p>Ride 상태: {status?.ride?.status ?? 'idle'} / lastError: {status?.ride?.lastError ?? '-'}</p><div className="mt-1 mb-1 h-3 w-full overflow-hidden rounded bg-slate-200"><div className="h-full bg-indigo-600" style={{ width: `${rideProgress}%` }} /></div><p>Ride 진행률: {rideProgress}%</p></div>
+      <div className="mt-3 rounded border bg-slate-50 p-3 text-xs space-y-2">
+        <p>선택 시도: {sido || '-'}</p>
+        <p>Baseline 상태: {status?.baseline?.status ?? 'idle'} / ready: {status?.baseline?.ready ? 'yes' : 'no'}</p>
+        <p>Baseline 마지막 성공 시각: {status?.baseline?.lastSuccessfulBaselineAt ?? '-'}</p>
+        <p>Baseline stage/place/page: {status?.baseline?.currentStage ?? '-'} / {status?.baseline?.currentInstallPlace ?? 'ALL'} / {status?.baseline?.currentPage ?? '-'} / {status?.baseline?.totalPagesCurrentInstallPlace ?? status?.baseline?.totalPagesOverall ?? '-'}</p>
+        <p>Baseline pages/raw/filtered: {status?.baseline?.pagesFetched ?? 0} / {status?.baseline?.rawFacilityCount ?? 0} / {status?.baseline?.filteredFacilityCount ?? 0}</p>
+        <p>Baseline lastPageItemCount/parsePathUsed: {status?.baseline?.lastPageItemCount ?? 0} / {status?.baseline?.parsePathUsed ?? '-'}</p>
+        <p>Baseline filter mode/reliable/parser: {status?.baseline?.installPlaceFilterMode ?? '-'} / {String(status?.baseline?.installPlaceApiReliable ?? '-')} / {status?.baseline?.parserDebugVersion ?? '-'}</p>
+        <p>Baseline lastPageInstallPlaces: {(status?.baseline?.lastPageUniqueInstallPlaces ?? []).join(', ') || '-'}</p>
+        <p>Baseline lastPageSampleSidos: {(status?.baseline?.lastPageSampleSidos ?? []).join(', ') || '-'}</p>
+        <p>Baseline lastPageFilterReasonCounts: {JSON.stringify(status?.baseline?.lastPageFilterReasonCounts ?? {})}</p>
+        <p>Baseline lastError: {status?.baseline?.lastError ?? '-'}</p>
+        <div className="mt-1 mb-1 h-3 w-full overflow-hidden rounded bg-slate-200"><div className="h-full bg-blue-600" style={{ width: `${baselineProgress}%` }} /></div>
+        <p>Baseline 진행률: {baselineProgress}%</p>
+        <p>Ride 상태: {status?.ride?.status ?? 'idle'} / lastError: {status?.ride?.lastError ?? '-'}</p>
+        <div className="mt-1 mb-1 h-3 w-full overflow-hidden rounded bg-slate-200"><div className="h-full bg-indigo-600" style={{ width: `${rideProgress}%` }} /></div>
+        <p>Ride 진행률: {rideProgress}%</p>
+      </div>
     </section>
 
     <section className="rounded-xl bg-white p-4 shadow"><h2 className="mb-4 text-lg font-bold">검색 조건</h2><div className="grid gap-3 md:grid-cols-2"><select className="rounded border p-2" value={sido} onChange={(e) => setSido(e.target.value)}><option value="">시/도 선택</option>{sidoList.map((x) => <option key={x} value={x}>{x}</option>)}</select><select className="rounded border p-2" value={sigungu} onChange={(e) => setSigungu(e.target.value)} disabled={!sido || sigunguList.length === 0}><option value="">시/군/구 선택</option>{sigunguList.map((x) => <option key={x} value={x}>{x}</option>)}</select><input className="rounded border p-2" type="number" placeholder="설치연도(이후)" value={installYearFrom} onChange={(e) => setInstallYearFrom(e.target.value ? Number(e.target.value) : '')} /><input className="rounded border p-2" type="number" min={1} max={50} value={topN} onChange={(e) => setTopN(Number(e.target.value))} /></div><div className="mt-3"><p className="mb-2 text-sm font-semibold">설치장소</p><div className="flex flex-wrap gap-3">{Object.entries(INSTALL_PLACE_LABELS).map(([code, label]) => (<label key={code} className="flex items-center gap-1 text-sm"><input type="checkbox" checked={installPlaces.includes(code)} onChange={(e) => { setInstallPlaces((prev) => e.target.checked ? [...prev, code] : prev.filter((x) => x !== code)); }} />{label} ({code})</label>))}</div></div><div className="mt-4 grid gap-2 md:grid-cols-3">{weightFields.map(([k, label]) => (<label key={k} className="text-xs">{label}<input className="mt-1 w-full rounded border p-2" type="number" value={weights[k]} onChange={(e) => setWeights((prev) => ({ ...prev, [k]: Number(e.target.value) }))} /></label>))}</div><button onClick={onSearch} disabled={loadingSearch || !sido} className="mt-4 rounded bg-blue-600 px-4 py-2 font-semibold text-white disabled:bg-slate-400">{loadingSearch ? '검색 중...' : '검색 실행'}</button></section>
