@@ -7,7 +7,7 @@ export const runtime = 'nodejs';
 export async function GET(_: Request, { params }: { params: Promise<{ pfctSn: string }> }) {
   try {
     const { pfctSn } = await params;
-    const data = await getFacilityByPfctSn(Number(pfctSn));
+    const data = await getFacilityByPfctSn(pfctSn);
     if (!data.facility) return NextResponse.json({ message: 'Not found' }, { status: 404 });
     return NextResponse.json(data);
   } catch (error) {

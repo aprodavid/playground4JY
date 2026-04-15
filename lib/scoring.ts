@@ -12,7 +12,7 @@ export function buildWarnings(f: FacilityDoc, ride: RideCacheDoc): string[] {
 export function scoreFacility(f: FacilityDoc, ride: RideCacheDoc, w: WeightConfig): SearchResult {
   let score = 0;
   const scoreBreakdown: string[] = [];
-  const reasons: string[] = [];
+  const recommendationReasons: string[] = [];
   const nowYear = new Date().getFullYear();
 
   if (f.installYear && nowYear - f.installYear <= 3) {
@@ -37,12 +37,12 @@ export function scoreFacility(f: FacilityDoc, ride: RideCacheDoc, w: WeightConfi
   if (f.isExcellent) {
     score += w.excellentBonus;
     scoreBreakdown.push(`우수시설 +${w.excellentBonus}`);
-    reasons.push('우수시설 지정');
+    recommendationReasons.push('우수시설 지정');
   }
 
-  if (ride.typeCount >= 4) reasons.push('기구 종류가 다양함');
-  if (f.installYear && nowYear - f.installYear <= 5) reasons.push('비교적 최근 설치');
-  if (f.area >= 600) reasons.push('충분한 시설 면적');
+  if (ride.typeCount >= 4) recommendationReasons.push('기구 종류가 다양함');
+  if (f.installYear && nowYear - f.installYear <= 5) recommendationReasons.push('비교적 최근 설치');
+  if (f.area >= 600) recommendationReasons.push('충분한 시설 면적');
 
   const warnings = buildWarnings(f, ride);
   const recommended = score >= 20 && warnings.length < 2;
@@ -62,7 +62,7 @@ export function scoreFacility(f: FacilityDoc, ride: RideCacheDoc, w: WeightConfi
     rideCount: ride.filteredCount,
     score,
     scoreBreakdown,
-    reasons,
+    recommendationReasons,
     warnings,
     recommended,
   };

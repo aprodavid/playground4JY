@@ -1,5 +1,5 @@
 import {
-  INSTALL_PLACES,
+  INSTALL_PLACES, PFCT_URL, EXFC_URL,
   callApi,
   clearCollection,
   computeFacilityHash,
@@ -43,7 +43,7 @@ export async function processBaselineStep(job: JobDoc, serviceKey: string) {
       return;
     }
 
-    const fetched = await callApi('/pfc3/getPfctInfo3', {
+    const fetched = await callApi(PFCT_URL, {
       inslPlcSeCd: installPlace,
       pageIndex: page,
       recordCountPerPage: 200,
@@ -105,17 +105,17 @@ export async function processBaselineStep(job: JobDoc, serviceKey: string) {
 
   if (stage === 'exfc5') {
     const excellentPage = cursor.excellentPage ?? 1;
-    const fetched = await callApi('/exfc5/getExfcInfo5', {
+    const fetched = await callApi(EXFC_URL, {
       pageIndex: excellentPage,
       recordCountPerPage: 200,
       pageNo: excellentPage,
       numOfRows: 200,
     }, serviceKey);
 
-    const existing = new Set<number>(cursor.excellent ?? []);
+    const existing = new Set<string>((cursor.excellent as string[] | undefined) ?? []);
     fetched.list.forEach((row) => {
-      const n = Number(row.pfctSn);
-      if (Number.isFinite(n)) existing.add(n);
+      const id = String(row.pfctSn ?? '').trim();
+      if (id) existing.add(id);
     });
     const reachedEnd = fetched.totalPages ? excellentPage >= fetched.totalPages : fetched.list.length < 200;
     const now = nowIso();
@@ -152,7 +152,7 @@ export async function processBaselineStep(job: JobDoc, serviceKey: string) {
     return;
   }
 
-  const excellentSet = new Set<number>(cursor.excellent ?? []);
+  const excellentSet = new Set<string>((cursor.excellent as string[] | undefined) ?? []);
   const facilitiesSnap = await db.collection('facilities').get();
   const sigunguMap = new Map<string, Set<string>>();
 
@@ -160,7 +160,7 @@ export async function processBaselineStep(job: JobDoc, serviceKey: string) {
   let updatedExcellent = 0;
   facilitiesSnap.docs.forEach((doc) => {
     const data = doc.data();
-    const shouldExcellent = excellentSet.has(Number(data.pfctSn));
+    const shouldExcellent = excellentSet.has(String(data.pfctSn));
     if (shouldExcellent && !data.isExcellent) {
       const patched = { ...data, isExcellent: true, updatedAt: nowIso() } as Record<string, unknown>;
       patched.contentHash = computeFacilityHash(patched);
@@ -191,7 +191,7 @@ export async function processBaselineStep(job: JobDoc, serviceKey: string) {
     baselineStatus: 'success',
     baselineReady: true,
     baselineSource: 'api-crawl',
-    baselineCurrentStage: 'completed',
+    baselineCurrentStage: 'success',
     baselineCurrentInstallPlace: null,
     baselineCurrentPage: 1,
     baselineUpdatedAt: finishedAt,
@@ -209,7 +209,7 @@ export async function processBaselineStep(job: JobDoc, serviceKey: string) {
 
   await db.collection('jobs').doc(job.jobId).set({
     status: 'success',
-    currentStage: 'completed',
+    currentStage: 'success',
     updatedAt: finishedAt,
     resultSummary: {
       facilitiesCount: facilitiesSnap.size,

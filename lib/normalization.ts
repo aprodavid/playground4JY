@@ -1,4 +1,6 @@
-import { KOREA_SIDO_LIST, type FacilityDoc, type InstallPlaceCode } from '@/types/domain';
+import { KOREA_SIDO_LIST } from '@/src/config/regions';
+import type { FacilityDoc } from '@/types/domain';
+import type { InstallPlaceCode } from '@/src/config/installPlaces';
 
 function parseNumber(input: unknown): number | undefined {
   if (typeof input === 'number') return Number.isFinite(input) ? input : undefined;
@@ -142,7 +144,7 @@ export function toFacilityDoc(raw: Record<string, unknown>, isExcellent: boolean
   const installYear = parseNumber(getField(raw, ['instlYy', 'installYear', '설치연도']));
   const lat = parseNumber(getField(raw, ['latitude', 'lat', '위도']));
   const lng = parseNumber(getField(raw, ['longitude', 'lng', '경도']));
-  const pfctSn = Number(getField(raw, ['pfctSn', 'pfct_sn', '시설일련번호', '시설번호']));
+  const pfctSn = String(getField(raw, ['pfctSn', 'pfct_sn', '시설일련번호', '시설번호']) ?? '').trim();
 
   return stripUndefinedDeep({
     pfctSn,
@@ -162,7 +164,7 @@ export function toFacilityDoc(raw: Record<string, unknown>, isExcellent: boolean
   });
 }
 
-export function dedupeByCoordinate<T extends { lat?: number; lng?: number; pfctSn: number; address?: string }>(input: T[]): T[] {
+export function dedupeByCoordinate<T extends { lat?: number; lng?: number; pfctSn: string; address?: string }>(input: T[]): T[] {
   const groups = new Map<string, T[]>();
   for (const f of input) {
     const key = f.lat !== undefined && f.lng !== undefined ? `${f.lat.toFixed(6)}:${f.lng.toFixed(6)}` : `no:${f.pfctSn}`;
@@ -175,7 +177,7 @@ export function dedupeByCoordinate<T extends { lat?: number; lng?: number; pfctS
     const picked = candidates.sort((a, b) => {
       const specificityDiff = addressSpecificity(b.address ?? '') - addressSpecificity(a.address ?? '');
       if (specificityDiff !== 0) return specificityDiff;
-      return a.pfctSn - b.pfctSn;
+      return a.pfctSn.localeCompare(b.pfctSn);
     })[0];
     selected.push(picked);
   }

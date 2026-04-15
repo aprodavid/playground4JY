@@ -1,76 +1,48 @@
-# 어린이 놀이시설 추천 웹앱 v4 (Next.js + Firebase Functions 2nd gen)
+# playground4JY v1 (Clean Rebuild)
 
-## 핵심 운영 원칙
-- **baseline은 한 번 만들고 재사용**합니다.
-- **검색(`/api/search`)은 Firestore 캐시(`facilities` + `rideCache`)만 즉시 조회**합니다.
-- **ride 캐시는 baseline과 분리**되어 대표 `pfctSn` 대상만 부분 갱신합니다.
-- 무거운 수집/가공은 **Firebase Functions 백그라운드 워커**가 처리하고, **Vercel은 UI/검색/상태 조회만 담당**합니다.
+## 아키텍처 역할 분리
+- **Vercel / Next.js**: 검색 UI, 결과 UI, 운영 패널, `/api/search`, `/api/sigungu`, `/api/health`, `/api/debug/status`.
+- **Firebase Firestore**: `facilities`, `rideCache`, `sigunguIndex`, `cacheMeta`, `jobs`.
+- **Firebase Functions 2nd gen**: baseline worker, ride worker, job kick/tick/scheduler.
 
-## 역할 분리
-- **Vercel (Next.js 15.3.8 유지)**
-  - 검색 UI/API
-  - 운영 패널에서 작업 시작/중지/상태 polling
-- **Firebase Functions 2nd gen (Node.js 20 runtime)**
-  - baseline worker (`pfc3 -> exfc5 -> finalize`)
-  - ride worker (대표 시설 대상 부분 갱신)
-  - `jobs` 큐를 cursor 기반으로 이어서 처리 (중단/재개 가능)
-- **Firestore**
-  - `facilities`, `rideCache`, `sigunguIndex`, `cacheMeta`, `jobs`
+## 절대 운영 원칙
+- 검색 경로는 Firestore 캐시만 읽습니다. (`facilities + rideCache`)
+- 검색 버튼은 baseline/ride 생성 작업을 시작하지 않습니다.
+- baseline은 최초 1회 생성 후 재사용합니다. (`force-rebuild`일 때만 전체 재생성)
+- ride는 대표 `pfctSn` 기준으로 **없는 캐시만** 부분 갱신합니다.
+- 수동 파일 업로드/Blob/Python 경로는 사용하지 않습니다.
 
-## baseline 재사용/재생성 정책
-- **기준선 캐시 생성 버튼(일반)**
-  - baseline이 없으면 최초 생성
-  - baseline이 이미 준비(`baselineReady=true`, `baselineStatus=success`)되어 있으면 **재사용(새 전체 재생성 안 함)**
-- **기준선 강제 재생성 버튼**
-  - 운영자가 명시적으로 전체 재생성이 필요할 때만 사용
-  - 예: 데이터 스키마 변경, 대량 이상치 정리, 전국 재수집이 필요한 정책 변경
+## 고정 상수
+- `PFCT_URL = https://apis.data.go.kr/1741000/pfc3/getPfctInfo3`
+- `RIDE_URL = https://apis.data.go.kr/1741000/ride4/getRide4`
+- `EXFC_URL = https://apis.data.go.kr/1741000/exfc5/getExfc5`
+- 설치장소 코드: `A003`, `A022`, `A033`
+- 시/도 목록: 정적 상수 유지
+- 기구 화이트리스트: `D001..D009`, `D020..D022`, `D080`, `D050`, `D052`
 
-`cacheMeta/baseline:global`에 아래 핵심 메타를 유지합니다.
-- `baselineReady`
-- `baselineVersion`
-- `lastSuccessfulBaselineAt`
-- `baselineStatus`, `baselineCurrentStage`, `baselinePagesFetched` 등 진행 정보
-- `rideProgress` (ride 전용 진행 메타)
+## baseline 최초 생성 순서
+1. 운영 패널에서 **기준선 캐시 생성** 클릭
+2. job 상태머신 진행: `queued -> pfc3 -> exfc5 -> finalize -> success`
+3. 완료 시 `baselineReady=true` + `sigunguIndex` 생성/갱신
 
-## 검색 동작
-1. `/api/search`는 baseline 재생성 로직을 절대 수행하지 않습니다.
-2. baseline 미준비 시 409 + “기준선 캐시 생성 필요” 안내만 반환합니다.
-3. baseline 준비 후에는 Firestore 캐시 조회만 수행합니다.
+## ride 캐시 갱신 순서
+1. 운영 패널에서 **ride 캐시 갱신** 클릭
+2. 상태머신 진행: `queued -> ride -> success`
+3. 대표 `pfctSn` 대상 중 미존재 문서만 채움
 
-## 백그라운드 워커 동작
-- 스케줄러: `workerTick` (2분마다)
-- Firestore 트리거: `onJobCreatedKick` (job 생성 시 즉시 1회 실행)
-- HTTP: `workerKick` (운영 점검용 수동 1step 실행)
+## 검색 플로우
+- `/api/search`는 baseline 미준비 시 `409`와 안내 메시지를 반환합니다.
+- baseline 준비 후에는 재생성을 트리거하지 않고 즉시 캐시 조회만 수행합니다.
 
-### baseline worker
-- cursor(`stage/installPlaceIndex/page/excellentPage`)를 `jobs/{jobId}`에 저장
-- invocation마다 일부 단계만 처리 후 종료
-- 다음 tick/trigger에서 이어서 처리
-- BulkWriter + `contentHash` 비교로 변경 없는 문서 재쓰기 최소화
-
-### ride worker
-- baseline과 분리된 job 타입
-- 시설 좌표 기준 대표 `pfctSn` 목록 생성
-- **이미 있는 `rideCache` 문서는 건너뛰고 없는 대상만 채움**
-- `rideProgress`에 processed/updated/error/skipped 누적
-
-## 운영자가 해야 할 최소 순서
-1. 상태 새로고침
-2. baseline 미준비면 **기준선 캐시 생성** 실행 (필요 시에만 **기준선 강제 재생성**)
-3. baseline 준비 후 **ride 캐시 갱신** 실행
-4. 검색 기능 사용
-
-## 환경변수 (이름 변경 금지)
+## 환경변수 이름 (변경 금지)
 - `PUBLIC_DATA_BASE_URL`
 - `PUBLIC_DATA_SERVICE_KEY`
 - `FIREBASE_PROJECT_ID`
 - `FIREBASE_CLIENT_EMAIL`
 - `FIREBASE_PRIVATE_KEY`
 
-> `FIREBASE_PRIVATE_KEY`의 `\n` 복원 로직 유지.
-
-## 배포/검증 명령
-### Next.js
+## 로컬 검증
+### 루트 앱
 ```bash
 npm install
 npm run lint
@@ -83,41 +55,20 @@ cd functions
 npm install
 npm run lint
 npm run build
+```
+
+## 배포 순서
+1. Firestore index 반영
+```bash
+firebase deploy --only firestore
+```
+2. Functions 배포
+```bash
+cd functions
 firebase deploy --only functions
 ```
+3. Vercel은 루트 앱을 배포 (UI/검색 전용)
 
-
-## Firestore 인덱스 운영 가이드
-운영 중 `The query requires an index` 오류를 줄이기 위해 저장소 루트의 `firestore.indexes.json`을 함께 관리합니다.
-
-### 왜 필요한가
-코드에서 사용하는 Firestore 쿼리 중 일부(`where + orderBy` 조합)는 단일 필드 자동 인덱스로는 처리되지 않아 composite index가 필요합니다.  
-특히 `jobs` 컬렉션의 작업 조회 쿼리(상태 큐 처리, 타입별 최신 작업 조회)는 사전 인덱스가 없으면 런타임 오류가 발생할 수 있습니다.
-
-### 배포 방법
-```bash
-firebase deploy --only firestore:indexes
-```
-
-루트 `firebase.json`에 아래 설정이 포함되어 있으므로, 위 명령이 `firestore.indexes.json`을 기준으로 인덱스를 배포합니다.
-
-### 새 쿼리 추가 시 규칙
-- Firestore 쿼리에 `where + orderBy` 또는 다중 `where` 조합을 추가하면, 필요한 인덱스를 먼저 확인합니다.
-- 필요한 인덱스는 반드시 `firestore.indexes.json`에 반영한 뒤 코드와 함께 배포합니다.
-- 운영 패널/워크커에서 사용하는 쿼리도 동일 기준으로 관리합니다.
-
-## 참고
-- 시/도 정적 목록은 유지합니다.
-- 시/군/구는 `sigunguIndex`를 즉시 조회합니다.
-- 서비스키는 raw -> encoded fallback 호출을 유지합니다.
-
-## 배포 순서 (루트 앱과 Functions 분리)
-1. PR 생성/리뷰 후 **main에 merge**
-2. merge 직후 **Vercel이 루트 Next.js 앱을 자동 배포**
-3. Vercel 배포 확인 후 로컬에서 아래 명령으로 **Functions만 별도 배포**
-   ```bash
-   cd functions
-   firebase deploy --only functions
-   ```
-
-> 운영 표준 흐름: **PR merge → Vercel 자동 배포 → `firebase deploy --only functions`**
+## 인덱스 운영 규칙
+- 코드에서 사용하는 쿼리는 `firestore.indexes.json`에 고정 관리합니다.
+- 운영 중 수동 생성한 인덱스가 있으면 반드시 `firestore.indexes.json`에도 반영합니다.
