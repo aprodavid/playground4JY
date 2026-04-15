@@ -3,7 +3,7 @@
 ## 역할
 - baseline 캐시 생성(pfc3 + exfc5)
 - ride 캐시 부분 갱신(대표 좌표 dedupe)
-- Firestore `jobs` 상태 기반 재시작 가능한 배치 처리
+- Firestore `cacheMeta` 상태 기반 재시작 가능한 배치 처리
 
 ## 필수 준비
 1. Node 20+

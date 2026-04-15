@@ -4,8 +4,28 @@
       "collectionGroup": "facilities",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "sido", "order": "ASCENDING" },
-        { "fieldPath": "sigungu", "order": "ASCENDING" }
+        {
+          "fieldPath": "sido",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "sigungu",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "cacheMeta",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "regionKey",
+          "order": "ASCENDING"
+        }
       ]
     }
   ],
