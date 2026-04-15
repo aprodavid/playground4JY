@@ -1,35 +1,4 @@
-export type InstallPlaceCode = 'A003' | 'A022' | 'A033';
-
-export const INSTALL_PLACE_LABELS: Record<InstallPlaceCode, string> = {
-  A003: '도시공원',
-  A022: '박물관',
-  A033: '공공도서관',
-};
-
-export const RIDE_WHITELIST = [
-  'D001','D002','D003','D004','D005','D006','D007','D008','D009',
-  'D020','D021','D022','D080','D050','D052',
-] as const;
-
-export const KOREA_SIDO_LIST = [
-  '서울특별시',
-  '부산광역시',
-  '대구광역시',
-  '인천광역시',
-  '광주광역시',
-  '대전광역시',
-  '울산광역시',
-  '세종특별자치시',
-  '경기도',
-  '강원특별자치도',
-  '충청북도',
-  '충청남도',
-  '전북특별자치도',
-  '전라남도',
-  '경상북도',
-  '경상남도',
-  '제주특별자치도',
-] as const;
+import type { InstallPlaceCode } from '@/src/config/installPlaces';
 
 export type WeightConfig = {
   recent3yBonus: number;
@@ -45,22 +14,11 @@ export type WeightConfig = {
   excellentBonus: number;
 };
 
-export const DEFAULT_WEIGHTS: WeightConfig = {
-  recent3yBonus: 12,
-  recent5yBonus: 6,
-  area300: 3,
-  area600: 6,
-  area1000: 10,
-  type3: 4,
-  type4: 8,
-  type6: 14,
-  ride5: 3,
-  ride8: 8,
-  excellentBonus: 9,
-};
+export type RawFacilityApiRow = Record<string, string | number | null | undefined>;
+export type RawRideApiRow = Record<string, string | number | null | undefined>;
 
-export type FacilityDoc = {
-  pfctSn: number;
+export type NormalizedFacility = {
+  pfctSn: string;
   facilityName: string;
   sido: string;
   sigungu: string;
@@ -77,8 +35,10 @@ export type FacilityDoc = {
   updatedAt: string;
 };
 
+export type FacilityDoc = NormalizedFacility;
+
 export type RideCacheDoc = {
-  pfctSn: number;
+  pfctSn: string;
   rawCount: number;
   filteredCount: number;
   typeCount: number;
@@ -88,62 +48,25 @@ export type RideCacheDoc = {
   lastError?: string;
 };
 
-export type SearchResult = {
-  pfctSn: number;
-  facilityName: string;
+export type SigunguIndexDoc = {
   sido: string;
-  sigungu: string;
-  address: string;
-  installPlaceCode: InstallPlaceCode;
-  installYear?: number;
-  area: number;
-  areaMissing: boolean;
-  isExcellent: boolean;
-  rideTypeCount: number;
-  rideCount: number;
-  score: number;
-  scoreBreakdown: string[];
-  reasons: string[];
-  warnings: string[];
-  recommended: boolean;
-};
-
-export type ImportProgress = {
-  total: number;
-  processed: number;
-  success: number;
-  failure: number;
+  sigungu: string[];
+  updatedAt: string;
 };
 
 export type CacheMetaDoc = {
   regionKey: string;
   lastBuiltAt: string;
-  startedAt?: string;
-  updatedAt?: string;
   facilitiesCount: number;
   excellentCount: number;
-  pagesFetched?: number;
-  rawFacilityCount?: number;
-  filteredFacilityCount?: number;
-  successCount?: number;
-  errorCount?: number;
-  currentStage?: string;
-  currentInstallPlace?: string | null;
-  currentPage?: number;
-  totalPages?: number | null;
-  selectedRegion?: { sido: string; sigungu?: string };
-  buildDurationMs?: number;
-  lastBuildStatus: 'ok' | 'error';
   status?: 'idle' | 'running' | 'success' | 'error' | 'stopped';
   done?: boolean;
+  updatedAt?: string;
   lastError?: string | null;
-  stopRequested?: boolean;
-
   baselineStatus?: 'idle' | 'running' | 'success' | 'error' | 'stopped';
   baselineReady?: boolean;
   baselineVersion?: string;
   lastSuccessfulBaselineAt?: string;
-  baselineSource?: 'file-import' | 'api-crawl' | 'none';
   baselinePagesFetched?: number;
   baselineRawFacilityCount?: number;
   baselineFilteredFacilityCount?: number;
@@ -155,10 +78,6 @@ export type CacheMetaDoc = {
   baselineCurrentPage?: number;
   baselineTotalPages?: number | null;
   baselineBuildMode?: 'normal' | 'force-rebuild';
-  baselineSampleMatchedRegions?: string[];
-  baselineUnmatchedReasonCount?: Record<string, number>;
-  baselineImportProgress?: ImportProgress;
-
   rideStatus?: 'idle' | 'running' | 'success' | 'error' | 'stopped';
   rideStartedAt?: string;
   rideUpdatedAt?: string;
@@ -172,7 +91,25 @@ export type CacheMetaDoc = {
   };
 };
 
-export type BaselineMeta = CacheMetaDoc;
+export type SearchResult = {
+  pfctSn: string;
+  facilityName: string;
+  sido: string;
+  sigungu: string;
+  address: string;
+  installPlaceCode: InstallPlaceCode;
+  installYear?: number;
+  area: number;
+  areaMissing: boolean;
+  isExcellent: boolean;
+  rideTypeCount: number;
+  rideCount: number;
+  score: number;
+  scoreBreakdown: string[];
+  recommendationReasons: string[];
+  warnings: string[];
+  recommended: boolean;
+};
 
 export type JobType = 'baseline' | 'ride';
 export type JobStatus = 'queued' | 'running' | 'success' | 'error' | 'stopped';
@@ -190,7 +127,6 @@ export type JobDoc = {
   filteredFacilityCount?: number;
   successCount?: number;
   errorCount?: number;
-  selectedRegion?: { sido: string; sigungu?: string };
   startedAt?: string;
   updatedAt?: string;
   stopRequested?: boolean;

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { BASELINE_META_KEY, getCacheMeta, getSigunguBySido } from '@/lib/firestore-repo';
+import { BASELINE_META_KEY } from '@/src/config/firestore';
+import { getCacheMeta, getSigunguBySido } from '@/lib/firestore-repo';
 
 export const runtime = 'nodejs';
 

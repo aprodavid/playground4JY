@@ -1,7 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { DEFAULT_WEIGHTS, INSTALL_PLACE_LABELS, type JobDoc, type SearchResult, type WeightConfig } from '@/types/domain';
+import { INSTALL_PLACE_LABELS } from '@/src/config/installPlaces';
+import { DEFAULT_WEIGHTS } from '@/src/config/uiDefaults';
+import type { JobDoc, SearchResult, WeightConfig } from '@/types/domain';
 
 type SearchResponse = {
   summary: { totalCandidates: number; recommended: number };
